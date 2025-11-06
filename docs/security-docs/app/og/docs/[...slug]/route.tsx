@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { ImageResponse } from 'next/og';
 import { generate as DefaultImage } from 'fumadocs-ui/og';
 
+export const dynamic = 'force-static';
 export const revalidate = false;
 
 export async function GET(
