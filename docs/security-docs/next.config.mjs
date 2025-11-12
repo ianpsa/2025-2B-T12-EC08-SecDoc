@@ -2,6 +2,8 @@ import { createMDX } from 'fumadocs-mdx/next';
 
 const withMDX = createMDX();
 
+const isProd = process.env.NODE_ENV === 'production';
+
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
@@ -9,10 +11,9 @@ const config = {
   images: {
     unoptimized: true,
   },
-  // Configuração para GitHub Pages
-  // Se o repositório não for username.github.io, descomente e configure o basePath
-  basePath: '/2025-2B-T12-EC08-SecDoc',
-  assetPrefix: '/2025-2B-T12-EC08-SecDoc/',
+  // Configuração para GitHub Pages - apenas em produção
+  basePath: isProd ? '/2025-2B-T12-EC08-SecDoc' : '',
+  assetPrefix: isProd ? '/2025-2B-T12-EC08-SecDoc/' : '',
 };
 
 export default withMDX(config);
