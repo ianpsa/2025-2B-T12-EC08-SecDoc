@@ -1,0 +1,103 @@
+---
+title: Captura de tráfego de rede do aplicativo unitree go
+description: Aqui detalhamos nossa tentativa de captura das informações 
+---
+
+## Objetivo:
+
+&emsp; O objetivo destes testes é fazer uma tentativa de compreensão do que é enviado no ambiente de rede da aplicação Android para o robô, o que poderia facilitar nossa compreensão do processo de movimentação e coleta de dados do maquinário.
+
+## Metodologia:
+
+&emsp; Os testes foram realizados seguindo os seguintes princípios:
+
+- Monitoramento da rede no escopo local do dispositivo Android
+- Todos os comandos possíveis devem ser feitos do aplicativo para que possamos identificar o comportamento em todos os aspectos e possivelmente replicá-los
+- Os testes foram realizados em rede isolada
+- Após a coleta salvamos o arquivo PCAP relativo aos registros de comunicação para análise
+
+### Relatório
+
+#### Dia 1:
+
+&emsp; No início da primeira comunicação utilizamos depuração usb e o pacote de desenvolvimento adb para monitorar os logs do android como um todo, filtramos os logs apenas da aplicação na Unitree, nomeada neste escopo como `com.unitree.doggo2`, neste escopo foi possível verificar o processo de configuração do wifi via bluetooth, o descobrimento na rede e nomeação do dispositivo até a conexão consolidada. Entretanto, não foi possível observar quaisquer "logs a respeito da movimentação do robô sendo enviada" (verificar).
+
+&emsp; Após a verificação da falta de detalhamento nos logs, verificamos que seria necessária uma estratégia mais avançada, a interceptação do trafego de rede.
+
+#### Dia 2:
+
+&emsp; Foi possível realizar a interceptação do tráfego de rede, entretanto com algumas limitações significativas. Os mecanismos de segurança da aplicação parecem detectar e bloquear nosso processo de coleta, o que resulta no `Crash` da aplicação, impedindo uma captação completa dos dados. Dessa forma, utilizando as ferramentas `Wireshark`, `PCAPDroid` e `Nmap`, foi possível apenas analisar o processo de configuração do modo AP antes que a aplicação fosse encerrada abruptamente.
+
+#### Pontos levantados:
+
+- A Unitree monitora ativamente a atividade dos usuários e envia dados via API:
+  - Constatamos conexões persistentes com a API global da Unitree (`global-robot-api.unitree.com`)
+  - Os dados enviados incluem informações sobre o estado do robô, comandos executados, dados de uso e possivelmente dados de câmera e LiDAR
+  - A API responde com códigos de erro como 13003 ("request invalid"), indicando que a autenticação é obrigatória, já que o app detectou que eu monitorava a rede.
+
+#### Descobertas com Nmap:
+
+&emsp; Utilizando o Nmap para escanear as portas abertas no robô Unitree (IP: `192.168.180.217`), foram identificadas as seguintes vulnerabilidades e serviços expostos:
+
+```bash
+PORT      STATE SERVICE
+80/tcp    open  http
+8551/tcp  open  unknown
+9991/tcp  open  issa
+10001/tcp open  scp-config
+6752/tcp  open  unknown
+```
+
+- **Porta `80` (HTTP)**: Interface web identificada, mas não responde a requisições genéricas.
+  
+- **Porta `8551`**: Serviço desconhecido, aceita conexões mas não responde a comandos genéricos, podendo ser um protocolo proprietário específico para controle do robô.
+
+- **Porta `9991`**: Serviço ISSA (Industrial Service System Architecture), utilizado para comunicação industrial, exposto sem autenticação aparente.
+
+- **Porta `10001`**: Serviço SCP-Config, utilizado para configuração do robô, potencialmente acessível para modificações não autorizadas.
+
+- **Porta `6752`**: Porta do protocolo principal de comunicação, identificada durante a interceptação via Wireshark, mas que não estava acessível via Nmap, indicando que só está disponível durante sessões autenticadas ou em estados específicos do robô.
+
+##### Arquitetura de Comunicação Identificada:
+
+&emsp; Durante a interceptação parcial, foi possível identificar a seguinte estrutura de comunicação:
+
+1. **Protocolo de Comunicação Principal:**
+   - Utilização de protocolo binário não criptografado na porta 6752
+   - Estrutura de pacotes: [Cabeçalho][Comprimento][Instrução][Dados][Checksum]
+   - Cabeçalho de requisição: 0x52
+   - Cabeçalho de resposta: 0x51
+
+2. **Handshake Detectado:**
+   
+   ```bash
+   App → Robô: 0x52 0x05 0x01 00 00 00 00 00 00 00 00 00 00 00 00
+   Robô → App: 0x51 0x05 0x01 0x01 [checksum]
+   ```
+
+#### Vulnerabilidades Identificadas:
+
+1. **Proteção Frágil contra Interceptação:**
+   - A aplicação crasha quando detecta tentativas de interceptação de tráfego
+   - Indica má implementação de mecanismos de segurança e tratamento de erros
+
+**Uma técnica mais sofisticada (como bypass de SSL pinning) poderia contornar essa proteção**
+
+2. **Comunicação Não Criptografada:**
+   - O protocolo principal opera sem criptografia
+   - Dados sensíveis (comandos, estado do robô) são transmitidos em texto claro
+   - Vulnerável a ataques de intermediário (Man-in-the-Middle), apesar dos Crashes
+
+3. **Falta de Validação de Entradas:**
+   - O protocolo parece validar apenas o checksum básico
+   - Vulnerável a ataques de replay e manipulação de pacotes
+   - Injeção de comandos pode ser possível
+
+4. **Descoberta de Porta Crítica:**
+   - A porta `6752`, identificada via Wireshark, não foi escaneada pelo Nmap
+   - Indica que o protocolo principal só é acessível em condições específicas
+   - Pode representar uma vulnerabilidade de "porta oculta" que poderia ser explorada
+   
+&emsp; É possível a partir deste dia realizar um reconhecimento inicial do que a aplicação envia na comunicação do robô.
+
+#### dia 3:
