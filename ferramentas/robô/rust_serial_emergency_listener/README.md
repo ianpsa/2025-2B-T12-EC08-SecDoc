@@ -2,6 +2,8 @@
 
 Sistema em Rust para monitorar um botão de emergência via porta serial e acionar parada de emergência em robô Go2 via ROS2.
 
+Este projeto usa o **go2_ros2_toolbox** para controlar o robô através do serviço `go2_srvs/srv/Go2Modes`.
+
 ## Pré-requisitos
 
 ### Sistema
@@ -15,21 +17,103 @@ Sistema em Rust para monitorar um botão de emergência via porta serial e acion
 
 ## Instalação
 
-### 1. Clonar/Navegar ao diretório do projeto
+### ⭐ Método Recomendado para Go2 (go2_ros2_toolbox)
+
+Se você está usando o **go2_ros2_toolbox**, use o script específico:
 
 ```bash
 cd rust_serial_emergency_listener
+
+# Copiar para a máquina do Go2 e executar:
+./build_go2.sh
 ```
 
-### 2. Compilar o projeto
+Este script:
+- ✅ Verifica e compila o `go2_ros2_toolbox` se necessário
+- ✅ Carrega todos os ambientes ROS2 corretamente
+- ✅ Verifica pacotes `go2_srvs`, `unitree_go`, `unitree_api`
+- ✅ Mostra diagnóstico de erros específicos
+- ✅ Fornece próximos passos após compilação
+
+📖 **Guia completo:** Consulte `BUILD_GO2.md` para instruções detalhadas.
+
+### Método 2: Script Automático Completo
 
 ```bash
-# Compilação em modo debug (mais rápido, para testes)
-cargo build
+cd rust_serial_emergency_listener
+./install.sh
+```
 
-# Compilação otimizada (para produção)
+O script irá:
+- Instalar dependências do sistema
+- Verificar Rust/Cargo
+- Carregar ambiente ROS2
+- Compilar o projeto
+- Configurar o serviço systemd
+
+### Método 3: Compilação Manual
+
+#### 1. Instalar dependências
+
+```bash
+# Instalar ferramentas de build e clang (necessário para bindgen)
+sudo apt update
+sudo apt install build-essential clang libclang-dev pkg-config libudev-dev
+```
+
+#### 2. Carregar ambiente ROS2
+
+```bash
+# Source do ROS2 base
+source /opt/ros/foxy/setup.bash
+
+# Source dos workspaces unitree (ajuste os caminhos conforme sua instalação)
+source ~/unitree_ros2/cyclonedds_ws/install/setup.bash
+source ~/go2_ros2_toolbox/install/setup.bash
+
+# Verificar se os pacotes estão disponíveis
+ros2 pkg list | grep unitree_go
+```
+
+#### 3. Compilar o projeto
+
+```bash
+# Usar o script de build simplificado
+./build.sh
+
+# OU compilar manualmente:
+cargo clean
 cargo build --release
 ```
+
+### Método 4: Script de Build Simplificado
+
+Se você encontrar problemas de compilação, use o script `build.sh`:
+
+```bash
+./build.sh
+```
+
+Este script:
+- Verifica todas as dependências
+- Carrega automaticamente os ambientes ROS2
+- Mostra mensagens de erro detalhadas
+- Fornece soluções para problemas comuns
+
+## 📚 Guias e Documentação
+
+Este projeto inclui vários guias para facilitar o uso:
+
+- **`BUILD_GO2.md`** ⭐ - Guia específico para uso com go2_ros2_toolbox
+- **`QUICK_FIX.md`** - Correções rápidas para erros comuns de compilação
+- **`TROUBLESHOOTING.md`** - Soluções detalhadas para problemas
+- **`README.md`** (este arquivo) - Documentação geral
+
+### Scripts Disponíveis
+
+- **`build_go2.sh`** ⭐ - Build otimizado para go2_ros2_toolbox
+- **`build.sh`** - Build genérico com verificações
+- **`install.sh`** - Instalação completa incluindo serviço systemd
 
 ### 3. Configurar a porta serial
 
@@ -199,14 +283,22 @@ sudo dmesg -w
 ### ROS2 service call falha
 
 ```bash
+# Verificar se o ambiente go2_ros2_toolbox está sourced
+source ~/go2_ros2_toolbox/install/setup.bash
+
 # Verificar se o serviço ROS2 existe
 ros2 service list | grep go2
 
-# Testar chamada manual
+# Testar chamada manual (coloca o robô em modo damping)
 ros2 service call /go2/modes go2_srvs/srv/Go2Modes "{request_data: damp}"
 
 # Verificar se o package go2_srvs está instalado
 ros2 pkg list | grep go2
+
+# Se go2_srvs não aparecer, recompilar
+cd ~/go2_ros2_toolbox
+colcon build --packages-select go2_srvs
+source install/setup.bash
 ```
 
 ## Estrutura do Projeto

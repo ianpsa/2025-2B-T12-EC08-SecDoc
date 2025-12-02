@@ -1,24 +1,14 @@
-use r2r::{Context, Node};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{info, error, warn};
 
 pub struct EmergencyStopClient {
-    node: Arc<Mutex<Node>>,
     service_name: String,
 }
 
 impl EmergencyStopClient {
-    pub fn new(node_name: &str, service_name: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        info!("Initializing ROS2 client: node={}, service={}", node_name, service_name);
-        
-        let ctx = Context::create()?;
-        let node = Node::create(ctx, node_name, "")?;
-        
-        info!("ROS2 Nodes Created");
+    pub fn new(_node_name: &str, service_name: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        info!("Initializing ROS2 client (command-line mode): service={}", service_name);
         
         Ok(EmergencyStopClient {
-            node: Arc::new(Mutex::new(node)),
             service_name: service_name.to_string(),
         })
     }
@@ -27,8 +17,8 @@ impl EmergencyStopClient {
         if !state {
             return Ok(());
         }
-                
-        let _node = self.node.lock().await;
+        
+        info!("Emergency button pressed! Triggering stop...");
         
         let output = tokio::process::Command::new("ros2")
             .args(&[
@@ -61,21 +51,18 @@ impl EmergencyStopClient {
         }
     }
     
-    /// Mantém o nó ROS2 ativo (spinning)
+    /// Mantém o nó ROS2 ativo (dummy - não necessário no modo command-line)
     pub async fn spin(&self) {
+        // No modo command-line, não precisamos de spin
+        // Apenas mantém a task viva
         loop {
-            {
-                let mut node = self.node.lock().await;
-                node.spin_once(std::time::Duration::from_millis(100));
-            }
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
     }
     
-    /// Clone do Arc para uso em múltiplas tasks
+    /// Clone para uso em múltiplas tasks
     pub fn clone(&self) -> Self {
         EmergencyStopClient {
-            node: Arc::clone(&self.node),
             service_name: self.service_name.clone(),
         }
     }

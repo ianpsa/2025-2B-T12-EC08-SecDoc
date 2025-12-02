@@ -1,5 +1,187 @@
 # 🔧 Troubleshooting
 
+## Erro: "fatal error: 'stdbool.h' file not found" durante compilação
+
+Este erro ocorre quando o `bindgen` (usado pela biblioteca `r2r`) não consegue encontrar os headers padrão do C. 
+
+### Solução:
+
+```bash
+# 1. Instalar ferramentas de build essenciais e libclang
+sudo apt update
+sudo apt install build-essential clang libclang-dev
+
+# 2. Garantir que o ROS2 está sourced
+source /opt/ros/foxy/setup.bash  # Ajuste para sua versão (foxy, humble, etc)
+
+# 3. Limpar cache e recompilar
+cargo clean
+cargo build --release
+```
+
+### Se ainda não funcionar:
+
+```bash
+# Instalar dependências adicionais do ROS2
+sudo apt install \
+    ros-foxy-rcl \
+    ros-foxy-rcutils \
+    ros-foxy-rmw \
+    ros-foxy-rosidl-runtime-c
+
+# Verificar versão do clang
+clang --version
+
+# Se necessário, instalar versão específica
+sudo apt install clang-14 libclang-14-dev
+
+# Exportar variável de ambiente para o bindgen
+export LIBCLANG_PATH=/usr/lib/llvm-14/lib  # Ajuste conforme sua versão
+export LLVM_CONFIG_PATH=/usr/lib/llvm-14/bin/llvm-config
+
+# Tentar compilar novamente
+cargo clean
+cargo build --release
+```
+
+### Verificar se tudo está instalado:
+
+```bash
+# Verificar gcc
+gcc --version
+
+# Verificar clang
+clang --version
+
+# Verificar se stdbool.h existe
+find /usr -name stdbool.h 2>/dev/null
+
+# Verificar ROS2
+echo $ROS_DISTRO
+which ros2
+```
+
+## Erro: "undefined reference to rosidl_typesupport_introspection_c__get_message_type_support_handle__unitree_go"
+
+Este erro ocorre quando o pacote ROS2 `unitree_go` não está corretamente compilado ou sourced antes de compilar o projeto Rust.
+
+### Solução:
+
+```bash
+# 1. Source o ROS2 base
+source /opt/ros/foxy/setup.bash
+
+# 2. Source os workspaces que contêm os pacotes unitree_go
+# (ajuste os caminhos conforme sua instalação)
+source ~/go2_ros2_toolbox/install/setup.bash
+source ~/unitree_ros2/cyclonedds_ws/install/setup.bash
+
+# 3. Verificar se os pacotes estão disponíveis
+ros2 pkg list | grep unitree
+
+# 4. Verificar se as mensagens existem
+ros2 interface list | grep unitree_go
+
+# 5. Recompilar o workspace unitree se necessário
+cd ~/go2_ros2_toolbox
+colcon build --packages-select unitree_go
+source install/setup.bash
+
+# 6. Limpar e recompilar o projeto Rust
+cd /home/unitree/rust_serial_emergency_listener
+cargo clean
+cargo build --release
+```
+
+### Verificar conflitos entre workspaces
+
+Se você tem múltiplos workspaces com o mesmo pacote (como mostrado no erro), pode haver conflitos:
+
+```bash
+# Verificar qual workspace está sendo usado
+echo $AMENT_PREFIX_PATH
+
+# Deve mostrar algo como:
+# /home/unitree/go2_ros2_toolbox/install:/home/unitree/unitree_ros2/cyclonedds_ws/install:/opt/ros/foxy
+```
+
+### Recompilar pacotes unitree
+
+Se as mensagens ainda não são encontradas:
+
+```bash
+# Ir para o workspace que contém unitree_go
+cd ~/go2_ros2_toolbox  # ou ~/unitree_ros2/cyclonedds_ws
+
+# Limpar e recompilar
+colcon build --packages-select unitree_go --cmake-clean-cache
+
+# Source novamente
+source install/setup.bash
+
+# Verificar se as mensagens foram geradas
+ls install/unitree_go/lib/libunitree_go__rosidl_typesupport_c.so
+ls install/unitree_go/lib/libunitree_go__rosidl_typesupport_introspection_c.so
+
+# Agora compilar o projeto Rust
+cd /home/unitree/rust_serial_emergency_listener
+cargo clean
+cargo build --release
+```
+
+### Script de build completo
+
+Crie um script para facilitar:
+
+```bash
+#!/bin/bash
+# build.sh
+
+set -e  # Parar se houver erro
+
+echo "🔧 Configurando ambiente ROS2..."
+source /opt/ros/foxy/setup.bash
+source ~/go2_ros2_toolbox/install/setup.bash
+source ~/unitree_ros2/cyclonedds_ws/install/setup.bash
+
+echo "📦 Verificando pacotes ROS2..."
+if ! ros2 pkg list | grep -q unitree_go; then
+    echo "❌ Pacote unitree_go não encontrado!"
+    exit 1
+fi
+
+echo "🧹 Limpando build anterior..."
+cargo clean
+
+echo "🔨 Compilando..."
+cargo build --release
+
+echo "✅ Compilação concluída!"
+echo "📍 Binário: target/release/rust_serial_emergency_listener"
+```
+
+Torne-o executável e use:
+
+```bash
+chmod +x build.sh
+./build.sh
+```
+
+### Atualizar install.sh
+
+Se você tem um `install.sh`, garanta que ele source os workspaces corretos:
+
+```bash
+#!/bin/bash
+source /opt/ros/foxy/setup.bash
+source ~/go2_ros2_toolbox/install/setup.bash
+source ~/unitree_ros2/cyclonedds_ws/install/setup.bash
+
+cargo build --release
+
+# ... resto da instalação
+```
+
 ## Erro: "unknown proxy name: 'cursor-bin'"
 
 Este erro ocorre devido a uma configuração do rustup. Para corrigir:
