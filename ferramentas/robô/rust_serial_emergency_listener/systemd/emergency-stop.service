@@ -1,0 +1,48 @@
+[Unit]
+Description=Emergency-button-Service
+After=network.target
+# Se você estiver usando um daemon ROS2, adicione:
+# After=ros2.service
+# Requires=ros2.service
+
+[Service]
+Type=simple
+User=unitree
+Group=dialout
+WorkingDirectory=~/emergency-service/
+
+# Caminho para o executável compilado (ajuste conforme necessário)
+ExecStart=rust_serial_emergency_listener
+
+# Reiniciar automaticamente em caso de falha
+Restart=on-failure
+RestartSec=5s
+
+Environment="ROS_DOMAIN_ID=0"
+Environment="RMW_IMPLEMENTATION=rmw_cyclonedds_cpp"
+# Adicione outras variáveis ROS2 necessárias:
+# Environment="ROS_LOCALHOST_ONLY=1"
+
+# Source do ROS2 setup (ajuste o caminho conforme sua instalação)
+ExecStartPre=/bin/bash -c 'source /opt/ros/foxy/setup.bash'
+
+# Permissões para acessar dispositivos seriais
+SupplementaryGroups=dialout
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=emergency-stop
+
+# Limites de recursos
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Segurança (opcional - ajuste conforme necessário)
+ProtectSystem=strict
+ProtectHome=read-only
+# PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+
