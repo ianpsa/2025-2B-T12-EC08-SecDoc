@@ -1,0 +1,117 @@
+---
+title: Análise de Logs de Comunicação do Aplicativo Unitree Go
+description: Detalhes da análise dos logs de comunicação Bluetooth e WiFi do aplicativo Unitree Go com o robô Go2
+---
+
+Esta seção detalha a análise dos logs de comunicação entre a aplicação Android Unitree Go e o robô Go2, focando em Bluetooth Low Energy (BLE) e conexões WiFi, com base em arquivos de log capturados.
+
+### 6. Objetivo
+
+O objetivo destes testes é realizar uma auditoria "Caixa Preta" para compreender os mecanismos de comunicação via Bluetooth e WiFi entre a aplicação Android e o robô Go2. O foco é identificar padrões de conexão, protocolos utilizados e limitações nos logs, facilitando a engenharia reversa dos fluxos de dados e comandos.
+
+### 6.1 Metodologia
+
+Os testes foram conduzidos sob os seguintes princípios rigorosos:
+
+* **Análise Passiva de Logs:** Extração e filtragem de logs do sistema Android via ADB, focando em pacotes relacionados a Bluetooth e WiFi.
+* **Estímulo Exaustivo:** Execução de comandos de conexão e desconexão para mapear o comportamento completo da comunicação.
+* **Isolamento de Ambiente:** Testes realizados em setup controlado, sem interferência externa de rede.
+* **Persistência de Dados:** Armazenamento de arquivos de log para análise detalhada, disponíveis no diretório [unitree-app-logs](/home/asvarius/Área de trabalho/2025-2B-T12-EC08-SecDoc/ferramentas/robô/unitree-app-logs).
+
+### 6.2 Diário de Análise
+
+#### Dia 1: Análise Inicial de Logs Bluetooth e Identificação de Protocolos
+
+A abordagem inicial focou na análise de logs Bluetooth para mapear a comunicação BLE.
+
+* **Procedimento:** Filtragem de logs via ADB nos arquivos [logs-G02-bluetooth.logs](/home/asvarius/Área de trabalho/2025-2B-T12-EC08-SecDoc/ferramentas/robô/unitree-app-logs/logs-G02-bluetooth.logs) (3.563 linhas) e [logs-G02-control-bluetooth.logs](/home/asvarius/Área de trabalho/2025-2B-T12-EC08-SecDoc/ferramentas/robô/unitree-app-logs/logs-G02-control-bluetooth.logs) (3.328 linhas), buscando padrões de scan e conexão GATT.
+* **Observações:** Identificada a utilização de Bluetooth Low Energy (BLE) com protocolo GATT para conexões diretas ao robô Go2, identificado como "Go2_25156". Componentes como DogBluetoothActivity e BluetoothService gerenciam as conexões, mas não há dados específicos de comandos transmitidos.
+* **Conclusão Crítica:** Os logs revelam handshakes de conexão, mas não capturam payloads de aplicação ou comandos de movimento, indicando necessidade de análise mais profunda em camadas de aplicação.
+
+#### Dia 2: Análise de Logs WiFi e Tentativas de Rastreamento de Pacotes
+
+A estratégia evoluiu para análise de conexões WiFi e tentativas de captura de pacotes.
+
+* **Procedimento:** Análise do arquivo [logs-G02-wifi.logs](/home/asvarius/Área de trabalho/2025-2B-T12-EC08-SecDoc/ferramentas/robô/unitree-app-logs/logs-G02-wifi.logs) (2.644 linhas), complementada por verificação em [logs-G02-app-full.logs](/home/asvarius/Área de trabalho/2025-2B-T12-EC08-SecDoc/ferramentas/robô/unitree-app-logs/logs-G02-app-full.logs) (2.164 linhas) e captura de rede via [unitreecaps.pcapng](/home/asvarius/Área de trabalho/2025-2B-T12-EC08-SecDoc/ferramentas/robô/unitree-app-logs/unitreecaps.pcapng) (28MB, 134.623 linhas).
+* **Observações:** Conexões WiFi estabelecidas com SSID "InteliRobo" usando WPA2-PSK, com handshakes de autenticação e parâmetros como SNR de 33 dB e throughput estimado de 171 Mbps. Tentativas de rastreamento de pacotes via WifiHAL retornaram zero pacotes, e não há evidência de comandos de movimento nos logs.
+* **Conclusão Crítica:** Os logs WiFi focam em gerenciamento de conexão, sem dados de aplicação ou protocolos como UDP/TCP, sugerindo que comandos são transmitidos sobre a conexão estabelecida, exigindo ferramentas como tcpdump para captura.
+
+#### Dia 3: Integração de Análises e Recomendações para Captura Avançada
+
+Com base nas análises anteriores, integrou-se as descobertas de Bluetooth e WiFi para mapear a estrutura completa.
+
+* **Procedimento:** Cruzamento de dados dos logs Bluetooth e WiFi, com ênfase em limitações e propostas de ferramentas para captura mais profunda.
+* **Observações:** A comunicação BLE usa GATT para conexões diretas, enquanto WiFi gerencia redes como "InteliRobo" sem expor dados de aplicação. Recomenda-se uso de Wireshark para tráfego BLE/WiFi e filtragem ADB para logs de aplicação.
+* **Resultado:** Identificada a ausência de dados de comandos em todos os logs analisados, validando a necessidade de interceptação ativa para engenharia reversa.
+
+**Vulnerabilidades Identificadas neste ciclo:**
+
+1. **Exposição de Protocolos:** Conexões BLE via GATT e WiFi WPA2 sem criptografia de aplicação aparente, suscetíveis a sniffing.
+2. **Ausência de Logs Detalhados:** Logs do sistema não capturam payloads, permitindo comunicações ocultas sem rastreamento.
+3. **Dependência de Conexão Direta:** Handshakes expostos sem validação robusta, potencial para ataques de replay ou injeção.
+4. **Segurança por Obscuridade:** Parâmetros como portas e UUIDs não explicitados nos logs, mas acessíveis via captura externa.
+
+#### Dia 4: Identificação de Dados Sensíveis nos Logs
+
+Durante a análise detalhada dos arquivos de log, foram identificados múltiplos dados sensíveis expostos em texto claro, representando riscos significativos de segurança.
+
+* **Procedimento:** Busca sistemática por padrões de dados sensíveis (senhas, chaves, endereços MAC, IPs privados) em todos os arquivos de log utilizando expressões regulares e análise manual.
+* **Observações:** Identificados dados críticos de segurança armazenados em texto claro nos logs da aplicação, incluindo credenciais WiFi, chaves de API e identificadores de dispositivo.
+* **Conclusão Crítica:** A aplicação Unitree Go registra informações sensíveis em logs do sistema sem sanitização adequada, criando vetores de ataque adicionais caso os logs sejam comprometidos.
+
+**Dados Sensíveis Identificados:**
+
+1. **Senha WiFi em Texto Claro (CRÍTICO):**
+   * **Localização:** [logs-G02-app-full.logs](/home/asvarius/Área de trabalho/2025-2B-T12-EC08-SecDoc/ferramentas/robô/unitree-app-logs/logs-G02-app-full.logs), linha 1371
+   * **Conteúdo:** `pwdabc12345`
+   * **Contexto:** Senha da rede WiFi "Dog" do robô Go2 registrada em texto claro durante processo de configuração
+   * **Risco:** Comprometimento total da rede WiFi do robô se os logs forem acessados
+
+2. **Endereços MAC Completos:**
+   * **Robô Go2:** `78:22:88:AF:B9:50` e `7a:22:88:af:b9:4f`
+   * **Dispositivo WiFi:** `8a:62:79:50:be:98`
+   * **Localização:** Presentes em múltiplos arquivos de log
+   * **Risco:** Rastreamento de dispositivos e identificação única do robô
+
+3. **App Key e App ID:**
+   * **App Key:** `333869678`
+   * **App ID:** `333869678@android`
+   * **Localização:** Presente em múltiplas linhas dos logs, especialmente em requisições de telemetria
+   * **Risco:** Potencial uso não autorizado de APIs da Unitree se combinado com outros dados
+
+4. **Security Key:**
+   * **Valor:** `81fa37e492b44a03ac7f3e81f2648c04`
+   * **Localização:** [logs-G02-app-full.logs](/home/asvarius/Área de trabalho/2025-2B-T12-EC08-SecDoc/ferramentas/robô/unitree-app-logs/logs-G02-app-full.logs), linha 110
+   * **Risco:** Comprometimento de mecanismos de segurança da aplicação
+
+5. **IP Privado do Robô:**
+   * **IP:** `192.168.12.1`
+   * **Localização:** Requisições HTTP para endpoints do robô
+   * **Risco:** Identificação da rede interna e potencial acesso direto ao robô na rede local
+
+6. **Device IDs e Session IDs:**
+   * **Device ID:** `aRstDpB4UXcDAOgo8adq7iY6`
+   * **Session IDs e Request IDs:** Presentes em múltiplas requisições de telemetria
+   * **Risco:** Rastreamento de usuários e dispositivos, potencial para correlação de atividades
+
+**Vulnerabilidades Adicionais Identificadas:**
+
+1. **Logging Inseguro:** A aplicação registra credenciais e dados sensíveis em logs do sistema Android sem sanitização, violando práticas de segurança básicas.
+2. **Exposição de Credenciais:** Senhas WiFi armazenadas em texto claro permitem acesso não autorizado à rede do robô.
+3. **Identificadores Persistentes:** Device IDs e Session IDs podem ser utilizados para rastreamento de longo prazo.
+4. **Falta de Sanitização:** Nenhum mecanismo aparente de sanitização de dados sensíveis antes do logging.
+
+### 7. Conclusões Gerais
+
+A análise integrada dos logs de Bluetooth e WiFi revela que a comunicação entre o aplicativo Unitree Go e o robô Go2 ocorre principalmente via Bluetooth Low Energy (BLE) com protocolo GATT para conexões diretas e WiFi para redes como "InteliRobo", com autenticação WPA2. No entanto, os logs analisados (disponíveis no diretório [unitree-app-logs](/home/asvarius/Área de trabalho/2025-2B-T12-EC08-SecDoc/ferramentas/robô/unitree-app-logs)) focam em gerenciamento de conexões e não capturam dados de aplicação, comandos de movimento ou protocolos como UDP/TCP. Isso indica que os comandos são transmitidos em camadas superiores, exigindo ferramentas de interceptação como Wireshark ou Frida para análise completa.
+
+**Atenção Crítica:** A análise revelou a presença de dados sensíveis em texto claro nos logs, incluindo senhas WiFi, chaves de API e identificadores de dispositivo. Estes dados representam riscos significativos de segurança e devem ser sanitizados antes de qualquer compartilhamento ou publicação dos logs. Recomenda-se alteração imediata de credenciais expostas e implementação de sanitização de logs na aplicação.
+
+Especificamente:
+- **[logs-G02-app-full.logs](/home/asvarius/Área de Trabalho/2025-2B-T12-EC08-SecDoc/ferramentas/robô/unitree-app-logs/logs-G02-app-full.logs):** Logs gerais da aplicação, úteis para contexto, mas sem detalhes de payloads.
+- **[logs-G02-bluetooth.logs](/home/asvarius/Área de Trabalho/2025-2B-T12-EC08-SecDoc/ferramentas/robô/unitree-app-logs/logs-G02-bluetooth.logs):** Detalham scans e conexões BLE, identificando o robô como "Go2_25156".
+- **[logs-G02-control-bluetooth.logs](/home/asvarius/Área de Trabalho/2025-2B-T12-EC08-SecDoc/ferramentas/robô/unitree-app-logs/logs-G02-control-bluetooth.logs):** Focam em controle BLE, mostrando handshakes GATT.
+- **[logs-G02-wifi.logs](/home/asvarius/Área de Trabalho/2025-2B-T12-EC08-SecDoc/ferramentas/robô/unitree-app-logs/logs-G02-wifi.logs):** Registram conexões WiFi, autenticações e desconexões, sem dados de tráfego.
+- **[unitreecaps.pcapng](/home/asvarius/Área de Trabalho/2025-2B-T12-EC08-SecDoc/ferramentas/robô/unitree-app-logs/unitreecaps.pcapng):** Captura de pacotes de rede, essencial para análise de tráfego real, mas sem comandos explícitos nos logs associados.
+
+Recomenda-se prosseguir com captura ativa de tráfego para expor payloads e mitigar vulnerabilidades identificadas.

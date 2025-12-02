@@ -34,7 +34,13 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
 }
 
 export async function generateStaticParams() {
-  return source.generateParams();
+  const params = await Promise.resolve(source.generateParams());
+  // Ensure we return an array with proper format for Next.js static export
+  if (Array.isArray(params)) {
+    return params;
+  }
+  // Fallback: return empty array if generateParams doesn't return expected format
+  return [];
 }
 
 export async function generateMetadata(
