@@ -11,7 +11,6 @@
 | Cecilia Lima Coelho |
 | Julia Lika Ishikawa |
 | Gustavo Gonçalves da Costa |
-| [Nome do Integrante 5] |
 
 ## Sobre o Projeto
 
