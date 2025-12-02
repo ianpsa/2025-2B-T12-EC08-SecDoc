@@ -1,0 +1,310 @@
+---
+title: ROS2 Topics Guide
+description: Complete guide to ROS2 topics available for Unitree Go2, including LiDAR, camera, control, and robot state.
+---
+
+# Documentação e Guia de Execução dos Tópicos ROS2
+
+## **Tópicos Centrais do Robô**
+
+### **Tópicos de Dados do LiDAR**
+
+**`/utlidar/cloud_deskewed`** – Dados brutos do LiDAR em PointCloud2 do sensor LiDAR da Unitree [1](#4-0)
+
+**Comando de Lançamento:**
+
+```bash
+ros2 launch go2_core go2_startup.launch.py
+```
+
+**Exemplos de Uso:**
+
+```bash
+# Ver dados brutos do LiDAR
+ros2 topic echo /utlidar/cloud_deskewed
+
+# Checar informações do tópico
+ros2 topic info /utlidar/cloud_deskewed
+```
+
+---
+
+**`/trans_cloud`** – Dados processados acumulados do PointCloud2 após a acumulação de nuvem [2](#4-1)
+
+**Comando de Lançamento:**
+
+```bash
+ros2 launch go2_perception go2_pointcloud_process.launch.py
+```
+
+**Exemplos de Uso:**
+
+```bash
+# Ver nuvem de pontos processada
+ros2 topic echo /trans_cloud
+
+# Visualizar no RViz2
+ros2 run rviz2 rviz2 -d go2_core/config/default.rviz
+```
+
+---
+
+**`/scan`** – Dados de laser 2D convertidos da nuvem de pontos para navegação [3](#4-2)
+
+**Comando de Lançamento:**
+
+```bash
+ros2 launch go2_perception go2_pointcloud_process.launch.py
+```
+
+**Exemplos de Uso:**
+
+```bash
+# Ver dados do laser scan
+ros2 topic echo /scan
+
+# Verificar frequência do scan
+ros2 topic hz /scan
+```
+
+---
+
+### **Tópicos de Câmera e Visão**
+
+**`/camera/image_raw`** – Feed de imagem da câmera para streaming de vídeo [4](#4-3)
+
+**Comando de Lançamento:**
+
+```bash
+ros2 launch go2_core go2_base.launch.py video_enable:=true
+```
+
+**Exemplos de Uso:**
+
+```bash
+# Ver feed da câmera
+ros2 topic echo /camera/image_raw
+
+# Exibir imagens usando image_view
+ros2 run image_view image_view image:=/camera/image_raw
+```
+
+---
+
+### **Tópicos de Controle do Robô**
+
+**`/cmd_vel`** – Entrada de comando de velocidade para movimentação do robô [5](#4-4)
+
+**Comando de Lançamento:**
+
+```bash
+ros2 launch go2_core go2_base.launch.py
+```
+
+**Exemplos de Uso:**
+
+```bash
+# Enviar comando de velocidade
+ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.5, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.5}}"
+
+# Parar robô
+ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.0, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}"
+```
+
+---
+
+**`/odom`** – Dados de odometria do robô publicados pelo nó go2_base [6](#4-5)
+
+**Comando de Lançamento:**
+
+```bash
+ros2 launch go2_core go2_base.launch.py
+```
+
+**Exemplos de Uso:**
+
+```bash
+# Ver dados de odometria
+ros2 topic echo /odom
+
+# Verificar frequência da odometria
+ros2 topic hz /odom
+```
+
+---
+
+## **Tópicos de Requisição/Resposta da API**
+
+**`/api/sport/request`** – Requisições da API do modo Sport para comandos de movimento [7](#4-6)
+
+**Comando de Lançamento:**
+
+```bash
+ros2 launch go2_core go2_base.launch.py
+```
+
+**Exemplos de Uso:**
+
+```bash
+# Ver requisições da API (para debug)
+ros2 topic echo /api/sport/request
+
+# O nó go2_base publica automaticamente neste tópico ao lidar com /cmd_vel
+```
+
+---
+
+## **Tópicos de Estado do Robô**
+
+**`/utlidar/robot_pose`** – Dados de pose do robô usados pelo nó go2_base para transformações de coordenadas [8](#4-7)
+
+**Comando de Lançamento:**
+
+```bash
+ros2 launch go2_core go2_base.launch.py
+```
+
+**Exemplos de Uso:**
+
+```bash
+# Ver pose do robô
+ros2 topic echo /utlidar/robot_pose
+
+# Este tópico é consumido automaticamente pelo go2_base para publicar TF e odometria
+```
+
+---
+
+## **Lançamento Completo do Sistema**
+
+Para lançar todos os tópicos simultaneamente, use o arquivo principal:
+
+```bash
+source install/setup.bash
+ros2 launch go2_core go2_startup.launch.py
+```
+
+Isso executa o sistema completo incluindo todos os tópicos do robô, processamento de percepção, SLAM e navegação [9](#4-8).
+
+---
+
+## **Notas**
+
+* O tópico de vídeo `/camera/image_raw` só inicia quando `video_enable:=true` é especificado [10](#4-9)
+* Os tópicos de processamento de nuvem de pontos (`/trans_cloud`, `/scan`) requerem o pacote perception iniciado separadamente ou como parte do sistema completo
+* Todos os tópicos utilizam tipos padrão de mensagens do ROS2: `PointCloud2`, `Image`, `Twist`, `Odometry`, `LaserScan`
+* O frame de coordenadas padrão para a maioria dos tópicos é `/odom` conforme especificado na referência de frames [11](#4-10)
+
+Páginas do Wiki recomendadas:
+
+* *Getting Started (andy-zhuo-02/go2_ros2_toolbox)*
+* *Perception System (go2_perception) (andy-zhuo-02/go2_ros2_toolbox)*
+
+---
+
+### **Citações**
+
+*(todo o conteúdo citado foi mantido exatamente como no original, apenas traduzido quando necessário)*
+
+**File:** README.md (L81-87)
+
+````markdown
+```bash
+# Source the workspace
+source install/setup.bash
+
+# Launch the robot
+ros2 launch go2_core go2_startup.launch.py
+````
+
+````
+
+**File:** README.md (L105-109)
+```markdown
+| Frame          | Descrição         | Fonte                         |
+| -------------- | ----------------- | ----------------------------- |
+| `/odom`      | Frame de odometria | Tópico de odometria do Go2   |
+| `/map`       | Frame do mapa      | SLAM Toolbox                 |
+| `/base_link` | Base do robô       | Tópico de odometria do Go2   |
+````
+
+**File:** README.md (L115-115)
+
+```markdown
+| LiDAR (Unitree)     | `/utlidar/cloud_deskewed` | PointCloud2 | `/odom` |
+```
+
+**File:** README.md (L116-116)
+
+```markdown
+| LiDAR (Acumulado) | `/trans_cloud` | PointCloud2 | `/odom` |
+```
+
+**File:** README.md (L117-117)
+
+```markdown
+| Imagem da Câmera  | `/camera/image_raw` | Image | - |
+```
+
+**File:** go2_perception/launch/go2_pointcloud_process.launch.py (L14-35)
+
+```python
+        Node(
+            package='go2_perception', executable='pointcloud_to_laserscan_node',
+            remappings=[
+                ('cloud_in', '/trans_cloud'), 
+                ('scan', '/scan')
+                ],
+            parameters=[{
+                'target_frame': 'base_link',
+                'transform_tolerance': 0.01,
+                'min_height': -0.1,
+                'max_height': 1.0,
+                'angle_min': -3.14,
+                'angle_max': 3.14,
+                'angle_increment': 0.0087,
+                'scan_time': 0.25,
+                'range_min': 0.10,
+                'range_max': 20.0,
+                'use_inf': True,
+                'inf_epsilon': 1.0
+            }],
+            name='pointcloud_to_laserscan_node'
+        )
+```
+
+**File:** go2_core/src/go2_base.cpp (L31-35)
+
+```cpp
+        pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
+            "/utlidar/robot_pose", 10,
+            [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
+                handlePose(msg);
+            });
+```
+
+**File:** go2_core/src/go2_base.cpp (L38-42)
+
+```cpp
+        cmd_vel_sub_ = create_subscription<geometry_msgs::msg::Twist>(
+            "/cmd_vel", 10,
+            [this](const geometry_msgs::msg::Twist::SharedPtr msg) {
+                handleVelocity(msg);
+            });
+```
+
+**File:** go2_core/src/go2_base.cpp (L48-48)
+
+```cpp
+        sport_pub_ = create_publisher<unitree_api::msg::Request>("/api/sport/request", 10);
+```
+
+**File:** go2_core/launch/go2_base.launch.py (L12-16)
+
+```python
+    ld.add_action(DeclareLaunchArgument(
+        'video_enable',
+        default_value='false',
+        description='是否启用视频功能'
+    ))
+```

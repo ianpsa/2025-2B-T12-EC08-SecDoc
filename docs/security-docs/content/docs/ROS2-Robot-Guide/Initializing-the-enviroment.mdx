@@ -1,0 +1,81 @@
+---
+title: Initializing ROS2 Environment
+description: How to properly initialize the ROS2 environment, load necessary Go2 configurations, and verify robot topics are active.
+---
+
+# Guia de Inicialização do Ambiente ROS2 para o Unitree Go2
+
+Este documento explica como **inicializar corretamente o ambiente ROS2**, carregar as configurações necessárias do Go2 e verificar se os tópicos do robô estão ativos.
+
+##  Passo 1 — Acessar o diretório inicial
+
+Abra o terminal e certifique-se de que você está na pasta home (`~`):
+
+```bash
+cd ~
+```
+
+---
+
+##  Passo 2 — Carregar o ambiente ROS2 Foxy e o ambiente do Unitree
+
+Execute o comando abaixo para preparar o ambiente ROS2 e o ambiente específico do Go2:
+
+```bash
+source /opt/ros/foxy/setup.bash && source unitree_ros2/setup.sh
+```
+
+Isso irá:
+
+* Ativar o ROS2 Foxy
+* Configurar os paths necessários da Unitree
+* Habilitar mensagens, serviços e tópicos usados pelo Go2
+
+---
+
+##  Passo 3 — Entrar no workspace do `go2_ros2_toolbox`
+
+Agora navegue até o workspace oficial:
+
+```bash
+cd go2_ros2_toolbox
+```
+
+---
+
+##  Passo 4 — Carregar o ambiente do workspace
+
+Carregue o ambiente de build do workspace:
+
+```bash
+source install/setup.bash
+```
+
+Isto garante que todos os pacotes, nós e mensagens do workspace fiquem acessíveis.
+
+---
+
+##  Passo 5 — Verificar se os tópicos estão ativos
+
+Com o ambiente totalmente configurado, execute:
+
+```bash
+ros2 topic list
+```
+
+Caso os nós estejam rodando, você deverá ver tópicos como:
+
+* `/utlidar/cloud_deskewed`
+* `/trans_cloud`
+* `/scan`
+* `/camera/image_raw`
+* `/cmd_vel`
+* `/odom`
+* `/api/sport/request`
+* `/utlidar/robot_pose`
+
+Se **nenhum tópico aparecer**, provavelmente você ainda não iniciou o sistema do robô. Nesse caso, inicie:
+
+```bash
+ros2 launch go2_core go2_startup.launch.py
+```
