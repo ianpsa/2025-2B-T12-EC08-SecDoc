@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 serialport = "4"
-r2r = "0.9"
+# r2r = "0.9"  # Comentado para evitar problemas de linking
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 anyhow = "1"
