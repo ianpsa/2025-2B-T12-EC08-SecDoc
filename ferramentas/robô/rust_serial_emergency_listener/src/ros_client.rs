@@ -20,33 +20,40 @@ impl EmergencyStopClient {
         
         info!("Emergency button pressed! Triggering stop...");
         
-        let output = tokio::process::Command::new("ros2")
-            .args(&[
-                "service",
-                "call",
-                &self.service_name,
-                "go2_srvs/srv/Go2Modes",
-                "{request_data: damp}",
-            ])
-            .output()
-            .await;
+        // Adicionar timeout de 3 segundos ao comando
+        let output = tokio::time::timeout(
+            tokio::time::Duration::from_secs(3),
+            tokio::process::Command::new("ros2")
+                .args(&[
+                    "service",
+                    "call",
+                    &self.service_name,
+                    "go2_srvs/srv/Go2Modes",
+                    "{request_data: damp}",
+                ])
+                .output()
+        )
+        .await;
         
         match output {
-            Ok(result) => {
+            Ok(Ok(result)) => {
                 if result.status.success() {
-                    info!("Emergency service called, success");
+                    let stdout = String::from_utf8_lossy(&result.stdout);
+                    info!("Emergency service called successfully. Response: {}", stdout.trim());
                     Ok(())
                 } else {
                     let stderr = String::from_utf8_lossy(&result.stderr);
                     error!("Failed to call service: {}", stderr);
-                    warn!("Emergency button is taking too much to send the messages");
                     Err(format!("Service returned error: {}", stderr).into())
                 }
             }
-            Err(e) => {
-                error!("Failed to send the robot a command: {}", e);
-                warn!("Emergency button is taking too much to send the messages");
+            Ok(Err(e)) => {
+                error!("Failed to execute ros2 command: {}", e);
                 Err(e.into())
+            }
+            Err(_) => {
+                error!("ROS2 service call timed out after 3 seconds");
+                Err("Service call timeout".into())
             }
         }
     }
