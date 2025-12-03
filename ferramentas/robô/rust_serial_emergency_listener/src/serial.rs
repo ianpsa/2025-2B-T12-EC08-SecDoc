@@ -46,7 +46,7 @@ impl SerialHandler {
         let mut last_trigger_time: Option<std::time::Instant> = None;
         let mut last_valid_read_time: std::time::Instant = std::time::Instant::now();
         let debounce_duration = Duration::from_millis(100); // Reduzido para 100ms para resposta rápida
-        let state_reset_timeout = Duration::from_millis(150); // Reduzido para 150ms
+        let state_reset_timeout = Duration::from_secs(3); // Reduzido para 150ms
                 
         loop {
             match self.read_button_state() {
