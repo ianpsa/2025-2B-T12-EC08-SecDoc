@@ -13,7 +13,7 @@ impl SerialHandler {
     pub fn new(port_name: &str, baud_rate: u32) -> Result<Self, Box<dyn std::error::Error>> {
         info!("Opening serial port {} with baud rate {}", port_name, baud_rate);
         let serial_port = serialport::new(port_name, baud_rate)
-            .timeout(Duration::from_millis(100))
+            .timeout(Duration::from_millis(10))  // Timeout reduzido para 10ms para resposta rápida
             .open()?;
         let reader = BufReader::new(serial_port);
         
@@ -45,8 +45,8 @@ impl SerialHandler {
         let mut last_state: Option<bool> = None;
         let mut last_trigger_time: Option<std::time::Instant> = None;
         let mut last_valid_read_time: std::time::Instant = std::time::Instant::now();
-        let debounce_duration = Duration::from_millis(500); // 500ms debounce
-        let state_reset_timeout = Duration::from_secs(2); // 2 segundos sem dados = reset
+        let debounce_duration = Duration::from_millis(100); // Reduzido para 100ms para resposta rápida
+        let state_reset_timeout = Duration::from_millis(150); // Reduzido para 150ms
                 
         loop {
             match self.read_button_state() {
@@ -98,12 +98,12 @@ impl SerialHandler {
                         last_valid_read_time = std::time::Instant::now();
                     }
                     
-                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             }
             
-            // Pequeno delay para não sobrecarregar CPU
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            // Delay mínimo para não sobrecarregar CPU
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 }

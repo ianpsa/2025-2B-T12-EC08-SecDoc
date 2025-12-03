@@ -82,9 +82,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tokio::spawn(async move {
                     info!("Processing emergency button press...");
                     
-                    // Timeout de 5 segundos para a chamada
+                    // Timeout de 2 segundos para a chamada (reduzido para resposta rápida)
                     match tokio::time::timeout(
-                        tokio::time::Duration::from_secs(5),
+                        tokio::time::Duration::from_millis(150),
                         ros_client.trigger_emergency_stop(true)
                     ).await {
                         Ok(Ok(())) => {
@@ -94,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             error!("Error triggering emergency stop: {}", e);
                         }
                         Err(_) => {
-                            error!("Emergency stop call timed out after 5 seconds");
+                            error!("Emergency stop call timed out after 150 milliseconds");
                         }
                     }
                     

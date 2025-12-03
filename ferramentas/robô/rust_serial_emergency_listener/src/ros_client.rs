@@ -20,9 +20,9 @@ impl EmergencyStopClient {
         
         info!("Emergency button pressed! Triggering stop...");
         
-        // Adicionar timeout de 3 segundos ao comando
+        // Timeout de 1.5 segundos ao comando (reduzido para resposta rápida)
         let output = tokio::time::timeout(
-            tokio::time::Duration::from_secs(3),
+            tokio::time::Duration::from_millis(200),
             tokio::process::Command::new("ros2")
                 .args(&[
                     "service",
@@ -52,7 +52,7 @@ impl EmergencyStopClient {
                 Err(e.into())
             }
             Err(_) => {
-                error!("ROS2 service call timed out after 3 seconds");
+                error!("ROS2 service call timed out after 200 milliseconds");
                 Err("Service call timeout".into())
             }
         }
