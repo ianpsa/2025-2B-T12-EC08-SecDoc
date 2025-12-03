@@ -98,7 +98,7 @@ impl SerialHandler {
                         last_valid_read_time = std::time::Instant::now();
                     }
                     
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    tokio::time::sleep(Duration::from_secs(2)).await;
                 }
             }
             
