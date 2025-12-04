@@ -1,4 +1,3 @@
 mod serial;
-mod config;
-mod ros_client;
-mod web_client;
+mod ros;
+mod web;

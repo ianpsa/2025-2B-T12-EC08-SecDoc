@@ -1,19 +1,18 @@
-mod config;
-mod ros_client;
+mod ros;
 mod serial;
-mod web_client;
+mod web;
 
-use config::load_config;
+use serial::config::load_config;
 use futures_util::StreamExt;
-use ros_client::EmergencyStopClient;
-use serial::SerialHandler;
+use ros::ros_client::EmergencyStopClient;
+use serial::serial::SerialHandler;
 use signal_hook::consts::signal::*;
 use signal_hook_tokio::Signals;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{error, info};
 use tracing_subscriber;
-use web_client::WebClient;
+use web::web_client::WebClient;
 
 
 // Helper function to handle the actual ROS call safely
