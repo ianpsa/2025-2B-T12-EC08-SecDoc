@@ -36,7 +36,7 @@ impl SerialHandler {
 
     pub async fn monitor_emergency_signal<F>(&self, callback: F)
     where
-        F: Fn() + Send + 'static,
+        F: Fn(State, State) + Send + 'static, // Agora recebe (estado_anterior, estado_novo)
     {
         info!("Opening serial port {} at {}", self.port_name, self.baud_rate);
 
@@ -57,11 +57,11 @@ impl SerialHandler {
                 Ok(new_state) => {
                     if new_state != current_state {
                         info!("State change detected: {:?} -> {:?}", current_state, new_state);
+                        
+                        // Chama callback com estado anterior e novo estado
+                        callback(current_state, new_state);
+                        
                         current_state = new_state;
-
-                        if current_state == State::ON {
-                            callback();
-                        }
                     }
                 }
                 Err(e) => {
@@ -80,7 +80,7 @@ async fn main() {
     
     let handler = SerialHandler::new("/dev/ttyUSB0", 9600);
     
-    handler.monitor_emergency_signal(|| {
-        println!("*** EMERGENCY SIGNAL RECEIVED! ***");
+    handler.monitor_emergency_signal(|prev, new| {
+        println!("*** STATE CHANGE: {:?} -> {:?} ***", prev, new);
     }).await;
 }

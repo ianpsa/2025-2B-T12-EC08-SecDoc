@@ -1,9 +1,15 @@
+use r2r::nav2_msgs::action::AssistedTeleop::SendGoal::Request;
 use r2r::unitree_api::msg::Request;
 use r2r::{Node, Publisher, QosProfile};
 use std::sync::{Arc, Mutex};
 use tracing::{error, info};
 
 pub struct EmergencyStopClient {
+    pub publisher: Publisher<Request>,
+    pub node: Node,
+}
+
+pub struct RecoverFromFall {
     pub publisher: Publisher<Request>,
     pub node: Node,
 }
@@ -22,14 +28,7 @@ impl EmergencyStopClient {
         Ok(EmergencyStopClient { publisher, node })
     }
 
-    pub async fn trigger_emergency_stop(
-        &self,
-        state: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if !state {
-            return Ok(());
-        }
-
+    pub async fn trigger_emergency_stop(&self, state: bool) -> Result<(), Box<dyn std::error::Error>> {
         info!("Emergency button pressed! Triggering stop...");
 
         let msg = Request {
@@ -46,6 +45,26 @@ impl EmergencyStopClient {
         self.publisher.publish(&msg)?;
 
         error!("Emergency stop sent sucessfully!");
+        Ok(())
+    }
+
+    pub async fn trigger_recovery(&self) -> Result<(), Box<dyn std::error::Error>> {
+        info!("Recovery command received! Triggering robot recovery...");
+
+        let msg = Request {
+            header: r2r::unitree_api::msg::RequestHeader {
+                identity: r2r::unitree_api::msg::RequestIdentity {
+                    id: 123,
+                    api_id: 1006, // RECOVER
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        self.publisher.publish(&msg)?;
+
+        info!("Recovery command sent successfully!");
         Ok(())
     }
 
@@ -66,4 +85,8 @@ impl EmergencyStopClient {
 
         Ok(())
     }
+}
+
+impl RecoverFromFall {
+    pub fn new() {}
 }

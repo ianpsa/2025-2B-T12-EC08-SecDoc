@@ -5,7 +5,7 @@ mod web;
 use serial::config::load_config;
 use futures_util::StreamExt;
 use ros::ros_client::EmergencyStopClient;
-use serial::serial::SerialHandler;
+use serial::serial::{SerialHandler, State};
 use signal_hook::consts::signal::*;
 use signal_hook_tokio::Signals;
 use std::sync::Arc;
@@ -69,19 +69,90 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("System initialized. Waiting for Serial or Web signals...");
 
+    // Estado compartilhado: indica se o botão está pressionado
+    // e a task que envia damp continuamente enquanto pressionado
+    let button_pressed = Arc::new(Mutex::new(false));
+    let button_pressed_for_loop = Arc::clone(&button_pressed);
+    let ros_for_damp_loop = Arc::clone(&ros_client);
+    
+    // Task que fica enviando damp continuamente enquanto o botão estiver pressionado
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            
+            let is_pressed = *button_pressed_for_loop.lock().await;
+            
+            if is_pressed {
+                info!("Sending continuous DAMP command (button pressed)");
+                let guard = ros_for_damp_loop.lock().await;
+                match guard.trigger_emergency_stop(true).await {
+                    Ok(()) => {},
+                    Err(e) => error!("Failed to send DAMP: {}", e),
+                }
+            }
+        }
+    });
+
     let ros_for_serial = Arc::clone(&ros_client);
-    let serial_callback = move || {
+    let button_state = Arc::clone(&button_pressed);
+    
+    let serial_callback = move |prev_state: State, new_state: State| {
         let c = Arc::clone(&ros_for_serial);
+        let btn = Arc::clone(&button_state);
+        
         tokio::spawn(async move {
-            execute_emergency_stop(c, "SERIAL").await;
+            match (prev_state, new_state) {
+                // Botão foi pressionado: ativa flag para enviar damp continuamente
+                (State::OFF, State::ON) => {
+                    info!("*** SERIAL BUTTON PRESSED - Starting continuous DAMP ***");
+                    *btn.lock().await = true;
+                }
+                // Botão foi solto: desativa flag e envia RECOVER uma única vez
+                (State::ON, State::OFF) => {
+                    info!("*** SERIAL BUTTON RELEASED - Sending RECOVER once ***");
+                    *btn.lock().await = false;
+                    
+                    let guard = c.lock().await;
+                    match guard.trigger_recovery().await {
+                        Ok(()) => info!("Recovery command sent successfully"),
+                        Err(e) => error!("Failed to send RECOVER: {}", e),
+                    }
+                }
+                _ => {}
+            }
         });
     };
 
+    // Web callback: mesma lógica do serial (transições de estado)
     let ros_for_web = Arc::clone(&ros_client);
-    let web_callback = move || {
+    let button_state_web = Arc::clone(&button_pressed);
+    
+    let web_callback = move |prev_state: web::web_client::ButtonState, new_state: web::web_client::ButtonState| {
+        use web::web_client::ButtonState;
+        
         let c = Arc::clone(&ros_for_web);
+        let btn = Arc::clone(&button_state_web);
+        
         tokio::spawn(async move {
-            execute_emergency_stop(c, "WEB").await;
+            match (prev_state, new_state) {
+                // Botão web pressionado: ativa flag para enviar damp continuamente
+                (ButtonState::Released, ButtonState::Pressed) => {
+                    info!("*** WEB BUTTON PRESSED - Starting continuous DAMP ***");
+                    *btn.lock().await = true;
+                }
+                // Botão web solto: desativa flag e envia RECOVER uma única vez
+                (ButtonState::Pressed, ButtonState::Released) => {
+                    info!("*** WEB BUTTON RELEASED - Sending RECOVER once ***");
+                    *btn.lock().await = false;
+                    
+                    let guard = c.lock().await;
+                    match guard.trigger_recovery().await {
+                        Ok(()) => info!("Recovery command sent successfully (from WEB)"),
+                        Err(e) => error!("Failed to send RECOVER from WEB: {}", e),
+                    }
+                }
+                _ => {}
+            }
         });
     };
 
