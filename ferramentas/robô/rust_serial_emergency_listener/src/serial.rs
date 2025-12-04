@@ -20,7 +20,6 @@ impl From<String> for State {
         match value.to_lowercase().as_str().trim() {
             "0" => Self::OFF,
             "1" => Self::ON,
-            _ => panic!("unexpected read from serial buffer"),
         }
     }
 }
