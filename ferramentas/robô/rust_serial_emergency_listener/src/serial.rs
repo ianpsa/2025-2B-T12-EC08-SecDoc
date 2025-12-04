@@ -82,17 +82,3 @@ impl SerialHandler {
         warn!("Serial connection closed or stream ended.");
     }
 }
-
-// Example Usage Scaffolding
-#[tokio::main]
-async fn main() {
-    tracing_subscriber::fmt::init();
-    
-    // On Linux usually "/dev/ttyUSB0" or "/dev/ttyACM0"
-    // On Windows usually "COM3"
-    let handler = SerialHandler::new("/dev/ttyUSB0", 9600);
-    
-    handler.monitor_emergency_signal(|| {
-        println!("*** EMERGENCY SIGNAL RECEIVED! ***");
-    }).await;
-}
