@@ -6,12 +6,13 @@ use futures_util::StreamExt;
 use serial::SerialHandler;
 use config::load_config;
 use ros_client::EmergencyStopClient;
-use tracing::{info, error, warn};
+use tracing::{info, error};
 use tracing_subscriber;
 use signal_hook::consts::signal::*;
 use signal_hook_tokio::Signals;
 
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -25,11 +26,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Carregar configuração
     let config = load_config("config/config.yaml")?;
     
-    // 2. Inicializar cliente ROS2
-    let ros_client = EmergencyStopClient::new(
-        &config.ros_namespace,
-        &config.ros_service_name,
-    )?;
+    // 2. Inicializar cliente ROS2 wrapped em Arc<Mutex<>>
+    let ros_client = Arc::new(Mutex::new(
+        EmergencyStopClient::new(
+            &config.ros_namespace,
+            "/api/sport/request",  // Topic name
+        )?
+    ));
     
     // 3. Inicializar handler serial
     let mut serial_handler = SerialHandler::new(
@@ -38,17 +41,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     
     // 4. Spawn task para manter ROS2 spinning
-    let ros_client_spin = ros_client.clone();
+    let ros_client_spin = Arc::clone(&ros_client);
     tokio::spawn(async move {
-        ros_client_spin.spin().await;
+        loop {
+            {
+                let mut client = ros_client_spin.lock().await;
+                client.node.spin_once(std::time::Duration::from_millis(100));
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
     });
-    
-    // Adicionar flag para controlar se há uma chamada em andamento
-    let is_processing = Arc::new(AtomicBool::new(false));
     
     // 5. Configurar tratamento de sinais para shutdown gracioso
     let mut signals = Signals::new(&[SIGTERM, SIGINT])?;
-    let signals_handle = signals.handle();
+    let _signals_handle = signals.handle();
     
     tokio::spawn(async move {
         while let Some(signal) = signals.next().await {
@@ -65,45 +71,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("System initialized successfully");
     info!("Waiting for emergency button events...");
     
-    // 6. Loop principal: monitorar serial e acionar serviço
-    let is_processing_clone = is_processing.clone();
+    // 6. Loop principal: monitorar serial e acionar publisher
+    let ros_client_monitor = Arc::clone(&ros_client);
     serial_handler.monitor_emergency_signal(move |state| {
         if state {
-            // Verificar se já há uma chamada em andamento
-            if is_processing_clone.compare_exchange(
-                false, 
-                true, 
-                Ordering::SeqCst, 
-                Ordering::SeqCst
-            ).is_ok() {
-                let ros_client = ros_client.clone();
-                let is_processing_inner = is_processing_clone.clone();
+            let ros_client = Arc::clone(&ros_client_monitor);
+            
+            // Use tokio::task::spawn_blocking instead of tokio::spawn
+            // This moves the work to a blocking thread pool
+            tokio::task::spawn_blocking(move || {
+                info!("Processing emergency button press...");
                 
-                tokio::spawn(async move {
-                    info!("Processing emergency button press...");
-                    
-                    // Timeout de 2 segundos para a chamada (reduzido para resposta rápida)
-                    match tokio::time::timeout(
-                        tokio::time::Duration::from_millis(150),
-                        ros_client.trigger_emergency_stop(true)
-                    ).await {
-                        Ok(Ok(())) => {
+                // Use block_on to run async code in blocking context
+                let runtime = tokio::runtime::Handle::current();
+                runtime.block_on(async {
+                    let mut client = ros_client.lock().await;
+                    match client.trigger_emergency_stop(true).await {
+                        Ok(()) => {
                             info!("Emergency stop executed successfully");
                         }
-                        Ok(Err(e)) => {
+                        Err(e) => {
                             error!("Error triggering emergency stop: {}", e);
                         }
-                        Err(_) => {
-                            error!("Emergency stop call timed out after 150 milliseconds");
-                        }
                     }
-                    
-                    // Liberar flag
-                    is_processing_inner.store(false, Ordering::SeqCst);
                 });
-            } else {
-                warn!("Emergency button pressed but previous call still processing - ignoring");
-            }
+            });
         }
     }).await;
     

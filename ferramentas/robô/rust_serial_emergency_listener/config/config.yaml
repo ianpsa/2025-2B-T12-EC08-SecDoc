@@ -1,19 +1,14 @@
 # Configuração do Serviço de Botão de Emergência
-# Este arquivo permite alterar configurações sem recompilar
 
 # Porta serial onde o botão de emergência está conectado
-# Exemplos comuns: /dev/ttyACM0, /dev/ttyUSB0, /dev/ttyACM1
 serial_port: "/dev/ttyACM0"
 
-# Taxa de baud para comunicação serial
-# Deve coincidir com a configuração do dispositivo
+# Taxa de baud
 baud_rate: 115200
 
-# Nome do serviço ROS2 a ser chamado quando o botão for pressionado
-# Para o robô Go2, este é o serviço de modos
-ros_service_name: "/go2/modes"
+# O Tópico ROS2 para comandos de API (Unitree Go2 geralmente usa api/sport/request)
+# Se estiver usando a ponte padrão unitree_ros2, pode ser necessário ajustar este tópico
+ros_topic_name: "/api/sport/request"
 
 # Namespace do nó ROS2 deste serviço
 ros_namespace: "emergency_stop"
-
-

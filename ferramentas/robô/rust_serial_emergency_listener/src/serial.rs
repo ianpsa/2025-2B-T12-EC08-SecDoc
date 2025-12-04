@@ -99,10 +99,11 @@ impl SerialHandler {
                     }
                     
                     tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;  // Skip the normal sleep at the bottom
                 }
             }
             
-            // Delay mínimo para não sobrecarregar CPU
+            tokio::time::sleep(Duration::from_millis(150)).await;
         }
     }
 }
