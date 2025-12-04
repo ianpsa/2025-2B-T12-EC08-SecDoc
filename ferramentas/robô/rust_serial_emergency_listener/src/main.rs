@@ -1,15 +1,15 @@
-mod serial;
 mod config;
 mod ros_client;
+mod serial;
 
-use futures_util::StreamExt;
-use serial::SerialHandler;
 use config::load_config;
+use futures_util::StreamExt;
 use ros_client::EmergencyStopClient;
-use tracing::{info, error};
-use tracing_subscriber;
+use serial::SerialHandler;
 use signal_hook::consts::signal::*;
 use signal_hook_tokio::Signals;
+use tracing::{error, info};
+use tracing_subscriber;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -20,26 +20,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
-    
+
     info!("Starting emergency stop service");
-    
+
     // 1. Carregar configuração
     let config = load_config("config/config.yaml")?;
-    
+
     // 2. Inicializar cliente ROS2 wrapped em Arc<Mutex<>>
-    let ros_client = Arc::new(Mutex::new(
-        EmergencyStopClient::new(
-            &config.ros_namespace,
-            "/api/sport/request",  // Topic name
-        )?
-    ));
-    
+    let ros_client = Arc::new(Mutex::new(EmergencyStopClient::new(
+        &config.ros_namespace,
+        "/api/sport/request", // Topic name
+    )?));
+
     // 3. Inicializar handler serial
-    let mut serial_handler = SerialHandler::new(
-        &config.serial_port,
-        config.baud_rate,
-    )?;
-    
+    let mut serial_handler = SerialHandler::new(&config.serial_port)?;
+
     // 4. Spawn task para manter ROS2 spinning
     let ros_client_spin = Arc::clone(&ros_client);
     tokio::spawn(async move {
@@ -51,11 +46,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         }
     });
-    
+
     // 5. Configurar tratamento de sinais para shutdown gracioso
     let mut signals = Signals::new(&[SIGTERM, SIGINT])?;
     let _signals_handle = signals.handle();
-    
+
     tokio::spawn(async move {
         while let Some(signal) = signals.next().await {
             match signal {
@@ -67,21 +62,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-    
+
     info!("System initialized successfully");
     info!("Waiting for emergency button events...");
-    
+
     // 6. Loop principal: monitorar serial e acionar publisher
     let ros_client_monitor = Arc::clone(&ros_client);
-    serial_handler.monitor_emergency_signal(move |state| {
-        if state {
+    serial_handler
+        .monitor_emergency_signal(move || {
             let ros_client = Arc::clone(&ros_client_monitor);
-            
+
             // Use tokio::task::spawn_blocking instead of tokio::spawn
             // This moves the work to a blocking thread pool
             tokio::task::spawn_blocking(move || {
                 info!("Processing emergency button press...");
-                
+
                 // Use block_on to run async code in blocking context
                 let runtime = tokio::runtime::Handle::current();
                 runtime.block_on(async {
@@ -96,8 +91,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 });
             });
-        }
-    }).await;
-    
+        })
+        .await;
+
     Ok(())
 }
