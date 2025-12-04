@@ -8,11 +8,18 @@ use ros::ros_client::EmergencyStopClient;
 use serial::serial::{SerialHandler, State};
 use signal_hook::consts::signal::*;
 use signal_hook_tokio::Signals;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
 use tracing::{error, info};
 use tracing_subscriber;
 use web::web_client::WebClient;
+
+// Comandos que podem ser enviados ao ROS via channel
+#[derive(Debug, Clone, Copy)]
+enum RosCommand {
+    StartDamp,      // Inicia envio contínuo de DAMP
+    StopAndRecover, // Para DAMP e envia RECOVER
+}
 
 async fn execute_emergency_stop(client: Arc<Mutex<EmergencyStopClient>>, source: &str) {
     info!("*** {} KILL SWITCH TRIGGERED ***", source);
@@ -69,91 +76,103 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("System initialized. Waiting for Serial or Web signals...");
 
-    // Estado compartilhado: indica se o botão está pressionado
-    // e a task que envia damp continuamente enquanto pressionado
-    let button_pressed = Arc::new(Mutex::new(false));
-    let button_pressed_for_loop = Arc::clone(&button_pressed);
-    let ros_for_damp_loop = Arc::clone(&ros_client);
+    // Canal para enviar comandos ROS de forma thread-safe (blocking channel)
+    let (tx, rx) = mpsc::channel::<RosCommand>();
+    let rx = Arc::new(StdMutex::new(rx));
     
-    // Task que fica enviando damp continuamente enquanto o botão estiver pressionado
-    tokio::spawn(async move {
+    // Thread separada que processa comandos ROS (std::thread, não tokio::spawn!)
+    // Isso resolve o problema Send/Sync porque não cruza boundary do tokio
+    let ros_for_commands = Arc::clone(&ros_client);
+    let rx_clone = Arc::clone(&rx);
+    
+    std::thread::spawn(move || {
+        // Cria um runtime tokio dentro desta thread para executar código async
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut damp_active = false;
+        
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            // Tenta receber comando (timeout de 100ms)
+            let cmd_result = {
+                let rx_guard = rx_clone.lock().unwrap();
+                rx_guard.recv_timeout(std::time::Duration::from_millis(100))
+            };
             
-            let is_pressed = *button_pressed_for_loop.lock().await;
-            
-            if is_pressed {
-                info!("Sending continuous DAMP command (button pressed)");
-                let guard = ros_for_damp_loop.lock().await;
-                match guard.trigger_emergency_stop(true).await {
-                    Ok(()) => {},
-                    Err(e) => error!("Failed to send DAMP: {}", e),
+            match cmd_result {
+                Ok(RosCommand::StartDamp) => {
+                    info!("*** COMMAND: Start continuous DAMP ***");
+                    damp_active = true;
+                }
+                Ok(RosCommand::StopAndRecover) => {
+                    info!("*** COMMAND: Stop DAMP and send RECOVER ***");
+                    damp_active = false;
+                    
+                    // Usa o runtime tokio para executar código async
+                    rt.block_on(async {
+                        let guard = ros_for_commands.lock().await;
+                        match guard.trigger_recovery().await {
+                            Ok(()) => info!("Recovery command sent successfully"),
+                            Err(e) => error!("Failed to send RECOVER: {}", e),
+                        }
+                    });
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // Timeout normal - envia DAMP se ativo
+                    if damp_active {
+                        info!("Sending continuous DAMP command");
+                        rt.block_on(async {
+                            let guard = ros_for_commands.lock().await;
+                            match guard.trigger_emergency_stop(true).await {
+                                Ok(()) => {},
+                                Err(e) => error!("Failed to send DAMP: {}", e),
+                            }
+                        });
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    error!("Channel disconnected, exiting ROS command thread");
+                    break;
                 }
             }
         }
     });
 
-    let ros_for_serial = Arc::clone(&ros_client);
-    let button_state = Arc::clone(&button_pressed);
-    
+    // Serial callback: envia comandos pelo channel
+    let tx_serial = tx.clone();
     let serial_callback = move |prev_state: State, new_state: State| {
-        let c = Arc::clone(&ros_for_serial);
-        let btn = Arc::clone(&button_state);
+        let tx = tx_serial.clone();
         
-        tokio::spawn(async move {
-            match (prev_state, new_state) {
-                // Botão foi pressionado: ativa flag para enviar damp continuamente
-                (State::OFF, State::ON) => {
-                    info!("*** SERIAL BUTTON PRESSED - Starting continuous DAMP ***");
-                    *btn.lock().await = true;
-                }
-                // Botão foi solto: desativa flag e envia RECOVER uma única vez
-                (State::ON, State::OFF) => {
-                    info!("*** SERIAL BUTTON RELEASED - Sending RECOVER once ***");
-                    *btn.lock().await = false;
-                    
-                    let guard = c.lock().await;
-                    match guard.trigger_recovery().await {
-                        Ok(()) => info!("Recovery command sent successfully"),
-                        Err(e) => error!("Failed to send RECOVER: {}", e),
-                    }
-                }
-                _ => {}
+        // Spawn não é necessário - send é blocking e rápido
+        match (prev_state, new_state) {
+            (State::OFF, State::ON) => {
+                info!("*** SERIAL BUTTON PRESSED ***");
+                let _ = tx.send(RosCommand::StartDamp);
             }
-        });
+            (State::ON, State::OFF) => {
+                info!("*** SERIAL BUTTON RELEASED ***");
+                let _ = tx.send(RosCommand::StopAndRecover);
+            }
+            _ => {}
+        }
     };
 
-    // Web callback: mesma lógica do serial (transições de estado)
-    let ros_for_web = Arc::clone(&ros_client);
-    let button_state_web = Arc::clone(&button_pressed);
-    
+    // Web callback: envia comandos pelo channel
+    let tx_web = tx.clone();
     let web_callback = move |prev_state: web::web_client::ButtonState, new_state: web::web_client::ButtonState| {
         use web::web_client::ButtonState;
+        let tx = tx_web.clone();
         
-        let c = Arc::clone(&ros_for_web);
-        let btn = Arc::clone(&button_state_web);
-        
-        tokio::spawn(async move {
-            match (prev_state, new_state) {
-                // Botão web pressionado: ativa flag para enviar damp continuamente
-                (ButtonState::Released, ButtonState::Pressed) => {
-                    info!("*** WEB BUTTON PRESSED - Starting continuous DAMP ***");
-                    *btn.lock().await = true;
-                }
-                // Botão web solto: desativa flag e envia RECOVER uma única vez
-                (ButtonState::Pressed, ButtonState::Released) => {
-                    info!("*** WEB BUTTON RELEASED - Sending RECOVER once ***");
-                    *btn.lock().await = false;
-                    
-                    let guard = c.lock().await;
-                    match guard.trigger_recovery().await {
-                        Ok(()) => info!("Recovery command sent successfully (from WEB)"),
-                        Err(e) => error!("Failed to send RECOVER from WEB: {}", e),
-                    }
-                }
-                _ => {}
+        // Spawn não é necessário - send é blocking e rápido
+        match (prev_state, new_state) {
+            (ButtonState::Released, ButtonState::Pressed) => {
+                info!("*** WEB BUTTON PRESSED ***");
+                let _ = tx.send(RosCommand::StartDamp);
             }
-        });
+            (ButtonState::Pressed, ButtonState::Released) => {
+                info!("*** WEB BUTTON RELEASED ***");
+                let _ = tx.send(RosCommand::StopAndRecover);
+            }
+            _ => {}
+        }
     };
 
     tokio::join!(

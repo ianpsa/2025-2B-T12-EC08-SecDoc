@@ -1,4 +1,3 @@
-use r2r::nav2_msgs::action::AssistedTeleop::SendGoal::Request;
 use r2r::unitree_api::msg::Request;
 use r2r::{Node, Publisher, QosProfile};
 use std::sync::{Arc, Mutex};
@@ -28,7 +27,7 @@ impl EmergencyStopClient {
         Ok(EmergencyStopClient { publisher, node })
     }
 
-    pub async fn trigger_emergency_stop(&self, state: bool) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn trigger_emergency_stop(&self, _state: bool) -> Result<(), Box<dyn std::error::Error>> {
         info!("Emergency button pressed! Triggering stop...");
 
         let msg = Request {
