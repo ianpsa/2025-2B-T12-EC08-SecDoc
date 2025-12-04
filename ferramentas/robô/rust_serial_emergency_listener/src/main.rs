@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?));
 
     // 3. Inicializar handler serial
-    let mut serial_handler = SerialHandler::new(&config.serial_port)?;
+    let mut serial_handler = SerialHandler::new(&config.serial_port, 115200);
 
     // 4. Spawn task para manter ROS2 spinning
     let ros_client_spin = Arc::clone(&ros_client);

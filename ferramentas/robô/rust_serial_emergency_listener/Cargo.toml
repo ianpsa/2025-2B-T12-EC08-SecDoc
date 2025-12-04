@@ -16,3 +16,4 @@ signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
 futures-util = "0.3.31"
 r2r = "0.9.5"
 log = "0.4.29"
+tokio-serial = "5.4.5"

@@ -1,63 +1,98 @@
-use std::io::BufRead;
-use std::path::PathBuf;
+use std::io;
 use std::str::FromStr;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::fs::{read, File};
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tokio_serial::SerialPortBuilderExt; // Trait required to open ports
+use tracing::{error, info, warn};
 
-#[derive(Default, Eq, PartialEq)]
+#[derive(Debug, Default, Eq, PartialEq, Copy, Clone)]
 pub enum State {
     ON,
     #[default]
     OFF,
 }
 
-impl From<String> for State {
-    fn from(value: String) -> Self {
-        match value.to_lowercase().as_str().trim() {
-            "0" => Self::OFF,
-            "1" => Self::ON,
-            _ => panic!("Unexpected read from serial buffer"),
+// changed From to TryFrom to avoid panicking on noise
+impl TryFrom<String> for State {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.trim() {
+            "0" => Ok(Self::OFF),
+            "1" => Ok(Self::ON),
+            // Handle noise/garbage without crashing the thread
+            other => Err(format!("Unknown signal received: '{}'", other)),
         }
     }
 }
 
-#[derive(Default)]
 pub struct SerialHandler {
-    path: PathBuf,
+    port_name: String,
+    baud_rate: u32,
 }
 
 impl SerialHandler {
-    pub fn new(port_name: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        info!("Opening serial port {}", port_name);
-
-        Ok(SerialHandler {
-            path: PathBuf::from_str(port_name)?,
-        })
+    pub fn new(port_name: &str, baud_rate: u32) -> Self {
+        Self {
+            port_name: port_name.to_string(),
+            baud_rate,
+        }
     }
 
     pub async fn monitor_emergency_signal<F>(&self, callback: F)
     where
         F: Fn() + Send + 'static,
     {
-        let path = self.path.clone();
+        info!("Opening serial port {} at {}", self.port_name, self.baud_rate);
 
-        let mut state: State = Default::default();
-        if let Ok(file) = File::open(path).await {
-            let mut lines = BufReader::new(file).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                let new: State = line.into();
+        // 1. Open the port using tokio-serial, not File::open
+        let port = match tokio_serial::new(&self.port_name, self.baud_rate).open_native_async() {
+            Ok(p) => p,
+            Err(e) => {
+                error!("Failed to open serial port: {}", e);
+                return;
+            }
+        };
 
-                if new.ne(&state) {
-                    state = new;
-                    if state == State::ON {
-                        callback()
+        // 2. Wrap in BufReader for line-by-line reading
+        let mut reader = BufReader::new(port);
+        let mut lines = reader.lines();
+        let mut current_state = State::default();
+
+        // 3. Loop over lines asynchronously
+        while let Ok(Some(line_str)) = lines.next_line().await {
+            // 4. Safely parse the state
+            match State::try_from(line_str) {
+                Ok(new_state) => {
+                    // Only trigger if state actually changed
+                    if new_state != current_state {
+                        info!("State change detected: {:?} -> {:?}", current_state, new_state);
+                        current_state = new_state;
+
+                        if current_state == State::ON {
+                            callback();
+                        }
                     }
+                }
+                Err(e) => {
+                    warn!("Serial Parse Warning: {}", e);
                 }
             }
         }
+        
+        warn!("Serial connection closed or stream ended.");
     }
+}
+
+// Example Usage Scaffolding
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::fmt::init();
+    
+    // On Linux usually "/dev/ttyUSB0" or "/dev/ttyACM0"
+    // On Windows usually "COM3"
+    let handler = SerialHandler::new("/dev/ttyUSB0", 9600);
+    
+    handler.monitor_emergency_signal(|| {
+        println!("*** EMERGENCY SIGNAL RECEIVED! ***");
+    }).await;
 }
