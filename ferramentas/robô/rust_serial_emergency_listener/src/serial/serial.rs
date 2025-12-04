@@ -1,5 +1,5 @@
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio_serial::SerialPortBuilderExt; // Trait required to open ports
+use tokio_serial::SerialPortBuilderExt;
 use tracing::{error, info, warn};
 
 #[derive(Debug, Default, Eq, PartialEq, Copy, Clone)]
@@ -9,7 +9,6 @@ pub enum State {
     OFF,
 }
 
-// changed From to TryFrom to avoid panicking on noise
 impl TryFrom<String> for State {
     type Error = String;
 
@@ -17,7 +16,6 @@ impl TryFrom<String> for State {
         match value.trim() {
             "0" => Ok(Self::OFF),
             "1" => Ok(Self::ON),
-            // Handle noise/garbage without crashing the thread
             other => Err(format!("Unknown signal received: '{}'", other)),
         }
     }
@@ -42,7 +40,6 @@ impl SerialHandler {
     {
         info!("Opening serial port {} at {}", self.port_name, self.baud_rate);
 
-        // 1. Open the port using tokio-serial, not File::open
         let port = match tokio_serial::new(&self.port_name, self.baud_rate).open_native_async() {
             Ok(p) => p,
             Err(e) => {
@@ -51,17 +48,13 @@ impl SerialHandler {
             }
         };
 
-        // 2. Wrap in BufReader for line-by-line reading
         let reader = BufReader::new(port);
         let mut lines = reader.lines();
         let mut current_state = State::default();
 
-        // 3. Loop over lines asynchronously
         while let Ok(Some(line_str)) = lines.next_line().await {
-            // 4. Safely parse the state
             match State::try_from(line_str) {
                 Ok(new_state) => {
-                    // Only trigger if state actually changed
                     if new_state != current_state {
                         info!("State change detected: {:?} -> {:?}", current_state, new_state);
                         current_state = new_state;
@@ -81,13 +74,10 @@ impl SerialHandler {
     }
 }
 
-// Example Usage Scaffolding
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
     
-    // On Linux usually "/dev/ttyUSB0" or "/dev/ttyACM0"
-    // On Windows usually "COM3"
     let handler = SerialHandler::new("/dev/ttyUSB0", 9600);
     
     handler.monitor_emergency_signal(|| {

@@ -14,9 +14,6 @@ use tracing::{error, info};
 use tracing_subscriber;
 use web::web_client::WebClient;
 
-
-// Helper function to handle the actual ROS call safely
-// This prevents code duplication in the callbacks
 async fn execute_emergency_stop(client: Arc<Mutex<EmergencyStopClient>>, source: &str) {
     info!("*** {} KILL SWITCH TRIGGERED ***", source);
     let guard = client.lock().await;
