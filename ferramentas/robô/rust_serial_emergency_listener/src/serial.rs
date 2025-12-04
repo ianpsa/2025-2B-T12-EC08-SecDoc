@@ -20,7 +20,7 @@ impl From<String> for State {
         match value.to_lowercase().as_str().trim() {
             "0" => Self::OFF,
             "1" => Self::ON,
-            _ => panic!("Unexpected read from serial buffer")
+            _ => panic!("Unexpected read from serial buffer"),
         }
     }
 }
@@ -44,7 +44,7 @@ impl SerialHandler {
         F: Fn() + Send + 'static,
     {
         let path = self.path.clone();
-        
+
         let mut state: State = Default::default();
         if let Ok(file) = File::open(path).await {
             let mut lines = BufReader::new(file).lines();
