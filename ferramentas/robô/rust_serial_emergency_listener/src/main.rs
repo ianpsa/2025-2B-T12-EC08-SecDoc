@@ -1,6 +1,7 @@
 mod config;
 mod ros_client;
 mod serial;
+mod web_client;
 
 use config::load_config;
 use futures_util::StreamExt;
@@ -8,49 +9,56 @@ use ros_client::EmergencyStopClient;
 use serial::SerialHandler;
 use signal_hook::consts::signal::*;
 use signal_hook_tokio::Signals;
-use tracing::{error, info};
-use tracing_subscriber;
-
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::{error, info};
+use tracing_subscriber;
+use web_client::WebClient;
+
+
+// Helper function to handle the actual ROS call safely
+// This prevents code duplication in the callbacks
+async fn execute_emergency_stop(client: Arc<Mutex<EmergencyStopClient>>, source: &str) {
+    info!("*** {} KILL SWITCH TRIGGERED ***", source);
+    let guard = client.lock().await;
+    
+    match guard.trigger_emergency_stop(true).await {
+        Ok(()) => info!("ROS Emergency Stop executed successfully via {}", source),
+        Err(e) => error!("Failed to trigger ROS Stop via {}: {}", source, e),
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Inicializar logging
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
 
     info!("Starting emergency stop service");
 
-    // 1. Carregar configuração
     let config = load_config("config/config.yaml")?;
 
-    // 2. Inicializar cliente ROS2 wrapped em Arc<Mutex<>>
     let ros_client = Arc::new(Mutex::new(EmergencyStopClient::new(
         &config.ros_namespace,
-        "/api/sport/request", // Topic name
+        "/api/sport/request",
     )?));
 
-    // 3. Inicializar handler serial
-    let mut serial_handler = SerialHandler::new(&config.serial_port, 115200);
+    let serial = SerialHandler::new(&config.serial_port, 9600); 
+    let web_client = WebClient::new("0.0.0.0:3000");
 
-    // 4. Spawn task para manter ROS2 spinning
     let ros_client_spin = Arc::clone(&ros_client);
     tokio::spawn(async move {
         loop {
             {
                 let mut client = ros_client_spin.lock().await;
-                client.node.spin_once(std::time::Duration::from_millis(100));
+                client.node.spin_once(std::time::Duration::from_millis(10));
             }
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         }
     });
 
-    // 5. Configurar tratamento de sinais para shutdown gracioso
     let mut signals = Signals::new(&[SIGTERM, SIGINT])?;
     let _signals_handle = signals.handle();
-
     tokio::spawn(async move {
         while let Some(signal) = signals.next().await {
             match signal {
@@ -63,36 +71,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    info!("System initialized successfully");
-    info!("Waiting for emergency button events...");
+    info!("System initialized. Waiting for Serial or Web signals...");
 
-    // 6. Loop principal: monitorar serial e acionar publisher
-    let ros_client_monitor = Arc::clone(&ros_client);
-    serial_handler
-        .monitor_emergency_signal(move || {
-            let ros_client = Arc::clone(&ros_client_monitor);
+    let ros_for_serial = Arc::clone(&ros_client);
+    let serial_callback = move || {
+        let c = Arc::clone(&ros_for_serial);
+        tokio::spawn(async move {
+            execute_emergency_stop(c, "SERIAL").await;
+        });
+    };
 
-            // Use tokio::task::spawn_blocking instead of tokio::spawn
-            // This moves the work to a blocking thread pool
-            tokio::task::spawn_blocking(move || {
-                info!("Processing emergency button press...");
+    let ros_for_web = Arc::clone(&ros_client);
+    let web_callback = move || {
+        let c = Arc::clone(&ros_for_web);
+        tokio::spawn(async move {
+            execute_emergency_stop(c, "WEB").await;
+        });
+    };
 
-                // Use block_on to run async code in blocking context
-                let runtime = tokio::runtime::Handle::current();
-                runtime.block_on(async {
-                    let mut client = ros_client.lock().await;
-                    match client.trigger_emergency_stop(true).await {
-                        Ok(()) => {
-                            info!("Emergency stop executed successfully");
-                        }
-                        Err(e) => {
-                            error!("Error triggering emergency stop: {}", e);
-                        }
-                    }
-                });
-            });
-        })
-        .await;
+    tokio::join!(
+        serial.monitor_emergency_signal(serial_callback),
+        web_client.monitor_death_signal(web_callback)
+    );
 
     Ok(())
 }

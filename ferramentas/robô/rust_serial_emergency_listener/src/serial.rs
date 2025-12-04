@@ -1,5 +1,3 @@
-use std::io;
-use std::str::FromStr;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_serial::SerialPortBuilderExt; // Trait required to open ports
 use tracing::{error, info, warn};
@@ -54,7 +52,7 @@ impl SerialHandler {
         };
 
         // 2. Wrap in BufReader for line-by-line reading
-        let mut reader = BufReader::new(port);
+        let reader = BufReader::new(port);
         let mut lines = reader.lines();
         let mut current_state = State::default();
 
@@ -81,4 +79,18 @@ impl SerialHandler {
         
         warn!("Serial connection closed or stream ended.");
     }
+}
+
+// Example Usage Scaffolding
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::fmt::init();
+    
+    // On Linux usually "/dev/ttyUSB0" or "/dev/ttyACM0"
+    // On Windows usually "COM3"
+    let handler = SerialHandler::new("/dev/ttyUSB0", 9600);
+    
+    handler.monitor_emergency_signal(|| {
+        println!("*** EMERGENCY SIGNAL RECEIVED! ***");
+    }).await;
 }
