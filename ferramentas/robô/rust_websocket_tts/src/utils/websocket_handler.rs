@@ -1,10 +1,39 @@
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-use futures_util::StreamExt;
+use futures_util::{StreamExt, SinkExt};
 use serde::{Deserialize, Serialize};
 use anyhow::{Result, Context};
 use tracing::{info, error, warn};
 
 use crate::audio_decoder::AudioPlayer;
+
+/// Message to send to backend - Text input
+#[derive(Debug, Serialize)]
+pub struct TextRequest {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub texto: String,
+    pub checkpoint_id: i32,
+    pub estado: String,
+    pub liberado_em: Option<String>,
+    pub question_topic: Option<String>,
+    pub respondido_em: Option<String>,
+    pub tour_id: Option<i32>,
+}
+
+impl TextRequest {
+    pub fn new(text: String) -> Self {
+        Self {
+            message_type: "text".to_string(),
+            texto: text,
+            checkpoint_id: 1,
+            estado: "pendente".to_string(),
+            liberado_em: None,
+            question_topic: Some("general".to_string()),
+            respondido_em: None,
+            tour_id: Some(1),
+        }
+    }
+}
 
 /// Response from the backend model
 #[derive(Debug, Deserialize, Serialize)]
@@ -66,7 +95,14 @@ impl WebSocketAudioClient {
 
         info!("Connected successfully!");
 
-        let (_write, mut read) = ws_stream.split();
+        let (mut write, mut read) = ws_stream.split();
+        
+        // Send a test message to the backend
+        info!("Sending test question to backend...");
+        let test_request = TextRequest::new("Olá, como você está?".to_string());
+        let message_json = serde_json::to_string(&test_request)?;
+        write.send(Message::Text(message_json)).await?;
+        info!("Test question sent, waiting for response...");
 
         // State tracking for multi-message responses
         let mut current_text_response: Option<String> = None;
@@ -93,17 +129,20 @@ impl WebSocketAudioClient {
                         continue;
                     }
                     
-                    // Try to parse as model response
+                    // Try to parse as JSON model response
                     if let Ok(response) = serde_json::from_str::<ModelResponse>(&text) {
                         if let Some(data) = &response.data {
-                            info!("✓ Text response received: {}", data.texto);
+                            info!("✓ JSON response received: {}", data.texto);
                             current_text_response = Some(data.texto.clone());
                         } else if let Some(msg) = &response.message {
                             info!("✓ Message: {}", msg);
+                            current_text_response = Some(msg.clone());
                         }
                     } else {
-                        // Unknown text message format
-                        warn!("Received unrecognized text message: {}", text);
+                        // Backend may send plain text response (not JSON)
+                        // This is the text response from the model
+                        info!("✓ Text response received: {}", text);
+                        current_text_response = Some(text.clone());
                     }
                 }
                 Ok(Message::Binary(data)) => {

@@ -14,11 +14,20 @@ A WebSocket client that connects to a TTS server, receives base64-encoded audio 
 ## Architecture
 
 ```
-Backend Server (10.140.0.11:8000/v1/audio)
+Robot (this client)
     │
-    │ WebSocket Connection
-    │ Sends 3 messages in sequence:
-    │   1. Text: {"message": "...", "data": {"texto": "..."}}
+    │ Send text question via WebSocket
+    │ {"type": "text", "texto": "Olá?", "checkpoint_id": 1, ...}
+    │
+    ▼
+Backend Server (localhost:8080/v1/audio)
+    │
+    │ Processes question through:
+    │   - /v1/modelo (HTTP POST)
+    │   - ML service TTS (WebSocket)
+    │
+    │ Sends 3 messages back in sequence:
+    │   1. Text: Plain text response from model
     │   2. Binary: Raw audio bytes (MP3/WAV/OGG)
     │   3. Text: {"done": true}
     │
@@ -62,7 +71,7 @@ cargo build --release
 
 ### Default Configuration
 
-Connects to `ws://10.140.0.11:8000/v1/audio`:
+Connects to `ws://localhost:8080/v1/audio` (backend server):
 
 ```bash
 cargo run --release
@@ -72,15 +81,41 @@ cargo run --release
 
 ```bash
 # Connect to different server
-export WS_URL="ws://192.168.1.100:8000/v1/audio"
+export WS_URL="ws://10.140.0.11:8080/v1/audio"
+cargo run --release
+
+# Or for remote backend
+export WS_URL="ws://192.168.1.100:8080/v1/audio"
 cargo run --release
 ```
 
 ## Message Format
 
+### Client Sends (Text Question)
+```json
+{
+  "type": "text",
+  "texto": "Qual é a história do museu?",
+  "checkpoint_id": 1,
+  "estado": "pendente",
+  "liberado_em": null,
+  "question_topic": "general",
+  "respondido_em": null,
+  "tour_id": 1
+}
+```
+
+### Backend Sends (Three Messages)
+
 The backend sends **three separate messages** for each response:
 
-### 1. Text Response (JSON)
+### 1. Text Response (Plain Text or JSON)
+Plain text from model:
+```
+O museu foi fundado em 1950...
+```
+
+Or JSON format:
 ```json
 {
   "message": "Question processed and answered successfully",
@@ -120,14 +155,14 @@ If an error occurs:
 
 ## How It Works
 
-1. **Connect**: Client connects to WebSocket server at `ws://10.140.0.11:8000/v1/audio`
-2. **Listen**: Waits for messages from backend server
-3. **Receive Text**: Gets JSON response with text answer from the model
+1. **Connect**: Client connects to WebSocket server at `ws://localhost:8080/v1/audio`
+2. **Send Question**: Sends text question to backend in JSON format
+3. **Receive Text**: Gets text response from the model (plain text or JSON)
 4. **Receive Audio**: Gets raw binary audio data (not base64)
 5. **Detect Format**: Auto-detects audio format from magic bytes (MP3/WAV/OGG/FLAC)
 6. **Play**: Plays audio through speakers immediately
 7. **Receive Done**: Gets completion signal `{"done": true}`
-8. **Repeat**: Continues listening for more responses
+8. **Repeat**: Can send more questions or continue listening
 9. **Auto-Reconnect**: If disconnected, reconnects after 5 seconds
 
 ## Project Structure
@@ -146,7 +181,7 @@ Environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `WS_URL` | `ws://10.140.0.11:8000/v1/audio` | WebSocket server URL |
+| `WS_URL` | `ws://localhost:8080/v1/audio` | WebSocket server URL |
 
 ## Logs
 
@@ -155,9 +190,11 @@ The application provides detailed logging:
 ```
 === Rust WebSocket Audio Client ===
 Configuration:
-  WebSocket URL: ws://10.140.0.11:8000/v1/audio
+  WebSocket URL: ws://localhost:8080/v1/audio
 Connecting to WebSocket server...
 Connected successfully!
+Sending test question to backend...
+Test question sent, waiting for response...
 Received text message: 248 bytes
 ✓ Text response received: O museu foi fundado em 1950...
 Received binary audio message: 15234 bytes
@@ -180,10 +217,11 @@ Error: Failed to connect to WebSocket server
 ```
 
 **Solutions:**
-- Check server is running: `curl http://10.140.0.11:8000/health`
-- Check network connectivity: `ping 10.140.0.11`
-- Verify server URL is correct
+- Check backend server is running on port 8080
+- Check network connectivity: `ping localhost` or ping your server IP
+- Verify server URL is correct (default: `ws://localhost:8080/v1/audio`)
 - Check firewall rules
+- Ensure backend `.env` and `config.default.toml` are properly configured
 
 ### No audio output
 
@@ -268,18 +306,23 @@ WS_URL="ws://localhost:8000" cargo run --release
 
 The client is designed to work with the backend server at:
 ```
-ws://10.140.0.11:8000/v1/audio
+ws://localhost:8080/v1/audio
 ```
 
 **Important Notes:**
-- The backend sends responses for questions processed through its ML pipeline
-- You cannot send messages to this endpoint - it's receive-only
-- The backend initiates audio responses when:
-  - A visitor asks a question via the web interface
-  - The robot's speech-to-text system sends a question
-  - A text query is processed through the `/v1/modelo` API
+- The client **sends text questions** to the backend
+- The backend processes questions through its ML pipeline:
+  1. Sends question to `/v1/modelo` endpoint
+  2. Converts model response to audio via TTS
+  3. Returns text + audio back to client
+- This client automatically sends a test question on connection
+- You can modify the code to send different questions or integrate with speech-to-text
 
-To test sending questions to the backend, use the backend's WebSocket endpoints directly (requires authentication).
+**Backend Requirements:**
+- Backend must be running (see `2025-2B-T12-EC08-BACK/`)
+- `.env` file must have `BACKEND_URL` configured
+- `config.default.toml` must have ML endpoint configured
+- ML service must be running for TTS conversion
 
 ## Deployment on Robot
 

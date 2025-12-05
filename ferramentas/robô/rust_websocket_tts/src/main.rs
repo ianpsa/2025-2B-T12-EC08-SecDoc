@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
 
     // Configuration
     let ws_url = std::env::var("WS_URL")
-        .unwrap_or_else(|_| "ws://10.140.0.11:8000/v1/audio".to_string());
+        .unwrap_or_else(|_| "ws://localhost:8080/v1/audio".to_string());
 
     info!("Configuration:");
     info!("  WebSocket URL: {}", ws_url);
@@ -47,12 +47,17 @@ async fn main() -> Result<()> {
 
     info!("=== Client Ready ===");
     info!("Connecting to: {}", ws_url);
-    info!("Waiting for audio messages from backend...");
     info!("");
-    info!("Backend sends 3 messages in sequence:");
-    info!("  1. Text response (JSON with model answer)");
-    info!("  2. Binary audio data (raw MP3/WAV/OGG bytes)");
-    info!("  3. Done signal ({{\"done\": true}})");
+    info!("Usage:");
+    info!("  This client connects to the backend WebSocket and can:");
+    info!("  1. Send text questions to the backend");
+    info!("  2. Receive text response + audio response");
+    info!("");
+    info!("Message flow:");
+    info!("  → Send: {{\"type\": \"text\", \"texto\": \"...\", ...}}");
+    info!("  ← Receive: Text response (JSON)");
+    info!("  ← Receive: Binary audio (MP3/WAV/OGG)");
+    info!("  ← Receive: {{\"done\": true}}");
     info!("");
 
     // Run the WebSocket client (will auto-reconnect on disconnect)
