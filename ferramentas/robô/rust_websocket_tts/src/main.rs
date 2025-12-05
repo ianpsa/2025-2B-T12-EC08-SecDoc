@@ -47,13 +47,12 @@ async fn main() -> Result<()> {
 
     info!("=== Client Ready ===");
     info!("Connecting to: {}", ws_url);
-    info!("Waiting for audio messages...");
+    info!("Waiting for audio messages from backend...");
     info!("");
-    info!("Expected message format (JSON):");
-    info!("{{");
-    info!("  \"audio_data\": \"<base64-encoded-audio>\",");
-    info!("  \"format\": \"mp3\"");
-    info!("}}");
+    info!("Backend sends 3 messages in sequence:");
+    info!("  1. Text response (JSON with model answer)");
+    info!("  2. Binary audio data (raw MP3/WAV/OGG bytes)");
+    info!("  3. Done signal ({{\"done\": true}})");
     info!("");
 
     // Run the WebSocket client (will auto-reconnect on disconnect)

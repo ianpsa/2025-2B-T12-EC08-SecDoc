@@ -14,18 +14,23 @@ A WebSocket client that connects to a TTS server, receives base64-encoded audio 
 ## Architecture
 
 ```
-TTS Server (10.140.0.11:8000/v1/audio)
+Backend Server (10.140.0.11:8000/v1/audio)
     │
     │ WebSocket Connection
-    │ Sends: {"audio_data": "<base64>", "format": "mp3"}
+    │ Sends 3 messages in sequence:
+    │   1. Text: {"message": "...", "data": {"texto": "..."}}
+    │   2. Binary: Raw audio bytes (MP3/WAV/OGG)
+    │   3. Text: {"done": true}
     │
     ▼
 Robot (this client)
     │
-    ├─ Receive WebSocket message
-    ├─ Decode base64 → audio bytes
-    ├─ Decode audio format (MP3/WAV/etc.)
-    └─ Play through speakers
+    ├─ Receive text response (log it)
+    ├─ Receive binary audio (raw bytes, not base64)
+    ├─ Detect audio format from magic bytes
+    ├─ Decode audio format (MP3/WAV/OGG/FLAC)
+    ├─ Play through speakers
+    └─ Receive done signal (mark complete)
 ```
 
 ## Prerequisites
@@ -73,21 +78,38 @@ cargo run --release
 
 ## Message Format
 
-The client expects to receive JSON messages:
+The backend sends **three separate messages** for each response:
 
+### 1. Text Response (JSON)
 ```json
 {
-  "audio_data": "<base64-encoded-audio>",
-  "format": "mp3",
-  "message_id": "optional-id"
+  "message": "Question processed and answered successfully",
+  "data": {
+    "id": 789,
+    "pergunta_id": 123,
+    "respondido_por_tipo": "modelo",
+    "texto": "O museu foi fundado em 1950...",
+    "criado_em": "2025-12-05T10:00:01Z"
+  }
 }
 ```
 
-### Fields
+### 2. Binary Audio Data
+- **Format:** Raw audio bytes (MP3/WAV/OGG/FLAC)
+- **Encoding:** NOT base64-encoded, direct binary data
+- **Size:** Variable (typically several KB)
+- **Detection:** Client auto-detects format from magic bytes
 
-- `audio_data` (required): Base64-encoded audio data
-- `format` (optional): Audio format - `"mp3"`, `"wav"`, `"ogg"`, `"flac"` (default: "mp3")
-- `message_id` (optional): ID for tracking/logging
+### 3. Done Signal (JSON)
+```json
+{"done": true}
+```
+
+### Error Response
+If an error occurs:
+```json
+{"error": "Error message here"}
+```
 
 ## Supported Audio Formats
 
@@ -99,12 +121,14 @@ The client expects to receive JSON messages:
 ## How It Works
 
 1. **Connect**: Client connects to WebSocket server at `ws://10.140.0.11:8000/v1/audio`
-2. **Listen**: Waits for audio messages from server
-3. **Receive**: Gets JSON with base64-encoded audio
-4. **Decode**: Decodes base64 → audio bytes
-5. **Play**: Plays audio through speakers
-6. **Repeat**: Continues listening for more messages
-7. **Auto-Reconnect**: If disconnected, reconnects after 5 seconds
+2. **Listen**: Waits for messages from backend server
+3. **Receive Text**: Gets JSON response with text answer from the model
+4. **Receive Audio**: Gets raw binary audio data (not base64)
+5. **Detect Format**: Auto-detects audio format from magic bytes (MP3/WAV/OGG/FLAC)
+6. **Play**: Plays audio through speakers immediately
+7. **Receive Done**: Gets completion signal `{"done": true}`
+8. **Repeat**: Continues listening for more responses
+9. **Auto-Reconnect**: If disconnected, reconnects after 5 seconds
 
 ## Project Structure
 
@@ -134,12 +158,17 @@ Configuration:
   WebSocket URL: ws://10.140.0.11:8000/v1/audio
 Connecting to WebSocket server...
 Connected successfully!
-Received text message: 15234 bytes
-Processing audio message - Format: mp3
-Decoded 15000 bytes of audio data
+Received text message: 248 bytes
+✓ Text response received: O museu foi fundado em 1950...
+Received binary audio message: 15234 bytes
+Playing audio response for: "O museu foi fundado em 1950..."
+Processing raw binary audio: 15234 bytes
+Detected audio format: mp3
 Audio playback started
 Audio playback completed
-Audio playback completed successfully
+✓ Audio playback completed successfully
+Received text message: 14 bytes
+✓ Processing complete signal received
 ```
 
 ## Troubleshooting
@@ -186,29 +215,44 @@ The client will automatically reconnect every 5 seconds. This is normal behavior
 
 ### Test Server (Python)
 
-Create a test server to send audio:
+Create a test server to simulate the backend:
 
 ```python
 import asyncio
 import websockets
 import json
-import base64
 
-async def send_audio(websocket):
+async def handle_client(websocket):
+    print("Client connected")
+    
     # Read test audio file
     with open("test.mp3", "rb") as f:
-        audio_data = base64.b64encode(f.read()).decode('utf-8')
+        audio_bytes = f.read()
     
-    # Send to client
-    message = {
-        "audio_data": audio_data,
-        "format": "mp3"
+    # 1. Send text response
+    text_response = {
+        "message": "Question processed and answered successfully",
+        "data": {
+            "id": 1,
+            "pergunta_id": 123,
+            "respondido_por_tipo": "modelo",
+            "texto": "Este é o museu Catavento, fundado em 2009.",
+            "criado_em": "2025-12-05T10:00:01Z"
+        }
     }
-    await websocket.send(json.dumps(message))
-    print("Audio sent!")
+    await websocket.send(json.dumps(text_response))
+    print("✓ Sent text response")
+    
+    # 2. Send binary audio (raw bytes, not base64)
+    await websocket.send(audio_bytes)
+    print(f"✓ Sent binary audio: {len(audio_bytes)} bytes")
+    
+    # 3. Send done signal
+    await websocket.send(json.dumps({"done": True}))
+    print("✓ Sent done signal")
 
 async def main():
-    async with websockets.serve(send_audio, "0.0.0.0", 8000):
+    async with websockets.serve(handle_client, "0.0.0.0", 8000):
         print("Test server running on ws://0.0.0.0:8000")
         await asyncio.Future()  # run forever
 
@@ -219,6 +263,23 @@ Then run the client:
 ```bash
 WS_URL="ws://localhost:8000" cargo run --release
 ```
+
+## Connecting to Backend
+
+The client is designed to work with the backend server at:
+```
+ws://10.140.0.11:8000/v1/audio
+```
+
+**Important Notes:**
+- The backend sends responses for questions processed through its ML pipeline
+- You cannot send messages to this endpoint - it's receive-only
+- The backend initiates audio responses when:
+  - A visitor asks a question via the web interface
+  - The robot's speech-to-text system sends a question
+  - A text query is processed through the `/v1/modelo` API
+
+To test sending questions to the backend, use the backend's WebSocket endpoints directly (requires authentication).
 
 ## Deployment on Robot
 
