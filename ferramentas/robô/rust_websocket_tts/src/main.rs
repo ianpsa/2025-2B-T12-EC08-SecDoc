@@ -1,9 +1,9 @@
-// Main entry point for the Rust WebSocket Audio Client
-// This application connects to a WebSocket server and plays received audio
-
 mod audio_decoder;
+mod ros_audio_msg;
+mod mp3_decoder;
 mod utils {
     pub mod websocket_handler;
+    pub mod ros_audio_publisher;
 }
 
 use anyhow::Result;
@@ -23,7 +23,8 @@ async fn main() -> Result<()> {
         .with_line_number(true)
         .init();
 
-    info!("=== Rust WebSocket Audio Client ===");
+    info!("=== Rust WebSocket → ROS2 Audio Bridge ===");
+    info!("🤖 Unitree GO2 Audio Client");
     info!("Starting initialization...");
 
     // Configuration
@@ -32,14 +33,16 @@ async fn main() -> Result<()> {
 
     info!("Configuration:");
     info!("  WebSocket URL: {}", ws_url);
+    info!("  ROS2 Topic: audiodata");
 
-    // Create WebSocket client
-    info!("Creating WebSocket audio client...");
+    // Create WebSocket client (this also initializes ROS2)
+    info!("Creating WebSocket audio client with ROS2 publisher...");
     let ws_client = match WebSocketAudioClient::new(ws_url.clone()) {
         Ok(client) => client,
         Err(e) => {
             error!("Failed to create WebSocket client: {}", e);
-            error!("Make sure audio devices are available");
+            error!("Make sure ROS2 is installed and configured");
+            error!("Run: source /opt/ros/<distro>/setup.bash");
             return Err(e);
         }
     };
@@ -48,15 +51,15 @@ async fn main() -> Result<()> {
     info!("=== Client Ready ===");
     info!("Connecting to: {}", ws_url);
     info!("");
-    info!("Usage:");
-    info!("  This client connects to the backend WebSocket and can:");
-    info!("  1. Send text questions to the backend");
-    info!("  2. Receive text response + audio response");
+    info!("Pipeline:");
+    info!("  WebSocket → Base64 decode (if needed) → MP3 decode → ROS2 publish → Robot plays");
     info!("");
     info!("Message flow:");
     info!("  → Send: {{\"type\": \"text\", \"texto\": \"...\", ...}}");
     info!("  ← Receive: Text response (JSON)");
-    info!("  ← Receive: Binary audio (MP3/WAV/OGG)");
+    info!("  ← Receive: Binary audio (MP3) or Base64 audio");
+    info!("  → Decode MP3 to PCM");
+    info!("  → Publish to ROS2 topic 'audiodata'");
     info!("  ← Receive: {{\"done\": true}}");
     info!("");
 

@@ -4,7 +4,13 @@ use serde::{Deserialize, Serialize};
 use anyhow::{Result, Context};
 use tracing::{info, error, warn};
 
-use crate::audio_decoder::AudioPlayer;
+// Import base64 for decoding base64-encoded audio
+use base64::Engine as _;
+use base64::engine::general_purpose;
+
+// Import our new modules
+use crate::mp3_decoder::decode_mp3_to_pcm;
+use crate::utils::ros_audio_publisher::RosAudioPublisher;
 
 /// Message to send to backend - Text input
 #[derive(Debug, Serialize)]
@@ -66,20 +72,44 @@ pub struct ErrorResponse {
     pub error: String,
 }
 
-/// WebSocket client that receives and plays audio
+/// WebSocket client that receives audio and publishes to ROS2
+/// 
+/// Flow: WebSocket → Base64 decode (if needed) → MP3 decode → ROS2 publish → Robot plays
 pub struct WebSocketAudioClient {
     url: String,
-    audio_player: AudioPlayer,
+    /// ROS2 publisher for sending audio to the Unitree GO2
+    ros_publisher: RosAudioPublisher,
 }
 
 impl WebSocketAudioClient {
-    /// Create a new WebSocket audio client
+    /// Create a new WebSocket audio client with ROS2 publisher
+    /// 
+    /// # Arguments
+    /// * `url` - WebSocket server URL (e.g., "ws://localhost:8080/v1/audio")
+    /// 
+    /// # Returns
+    /// * `Result<Self>` - Initialized client or error
     pub fn new(url: String) -> Result<Self> {
-        let audio_player = AudioPlayer::new()?;
+        // ================================================================
+        // TODO: Create ROS2 audio publisher
+        // ================================================================
+        // Based on Unitree conventions, the topic is likely "audiodata"
+        // The node name can be anything descriptive
+        
+        // CODE_TEMPLATE:
+        // let ros_publisher = RosAudioPublisher::new(
+        //     "rust_websocket_audio",  // Node name
+        //     "audiodata"              // Topic name (change if you discovered different)
+        // )?;
+        
+        let ros_publisher = RosAudioPublisher::new(
+            "rust_websocket_audio",  // Node name (visible in `ros2 node list`)
+            "audiodata"              // Topic name (change to match your GO2 if different)
+        )?;
         
         Ok(Self {
             url,
-            audio_player,
+            ros_publisher,
         })
     }
 
@@ -113,7 +143,20 @@ impl WebSocketAudioClient {
                 Ok(Message::Text(text)) => {
                     info!("Received text message: {} bytes", text.len());
                     
-                    // Check if it's a done signal
+                    // ============================================================
+                    // CHECK 1: Is this base64-encoded audio?
+                    // ============================================================
+                    // Some servers send audio as base64 text instead of binary
+                    // Indicators: starts with "data:audio" or very long text (>1000 chars)
+                    if text.starts_with("data:audio") || (text.len() > 1000 && !text.starts_with("{")) {
+                        info!("🔍 Detected base64 audio in text message");
+                        self.process_base64_audio(&text).await;
+                        continue;
+                    }
+                    
+                    // ============================================================
+                    // CHECK 2: Is this a done signal?
+                    // ============================================================
                     if let Ok(done) = serde_json::from_str::<DoneSignal>(&text) {
                         if done.done {
                             info!("✓ Processing complete signal received");
@@ -122,14 +165,18 @@ impl WebSocketAudioClient {
                         }
                     }
                     
-                    // Check if it's an error
+                    // ============================================================
+                    // CHECK 3: Is this an error?
+                    // ============================================================
                     if let Ok(error) = serde_json::from_str::<ErrorResponse>(&text) {
                         error!("✗ Server error: {}", error.error);
                         current_text_response = None;
                         continue;
                     }
                     
-                    // Try to parse as JSON model response
+                    // ============================================================
+                    // CHECK 4: Try to parse as JSON model response
+                    // ============================================================
                     if let Ok(response) = serde_json::from_str::<ModelResponse>(&text) {
                         if let Some(data) = &response.data {
                             info!("✓ JSON response received: {}", data.texto);
@@ -139,8 +186,9 @@ impl WebSocketAudioClient {
                             current_text_response = Some(msg.clone());
                         }
                     } else {
-                        // Backend may send plain text response (not JSON)
-                        // This is the text response from the model
+                        // ========================================================
+                        // CHECK 5: Plain text response (not JSON)
+                        // ========================================================
                         info!("✓ Text response received: {}", text);
                         current_text_response = Some(text.clone());
                     }
@@ -184,29 +232,140 @@ impl WebSocketAudioClient {
         Ok(())
     }
 
-    /// Process binary audio data (raw audio, not base64)
+    /// Process binary audio data and publish to ROS2
+    /// 
+    /// This is the core audio processing pipeline:
+    /// 1. Receive audio bytes (MP3 format)
+    /// 2. Decode MP3 to PCM
+    /// 3. Publish PCM to ROS2 for the robot to play
     async fn process_binary_audio(&self, audio_bytes: &[u8]) {
-        info!("Processing raw binary audio: {} bytes", audio_bytes.len());
+        info!("🎧 Processing audio: {} bytes", audio_bytes.len());
 
         if audio_bytes.is_empty() {
-            error!("Received empty audio data");
+            error!("✗ Received empty audio data");
             return;
         }
 
-        // The backend sends raw audio data (MP3/WAV/OGG), not base64-encoded
-        // Try to detect format based on magic bytes
+        // ================================================================
+        // STEP 1: Detect audio format (we expect MP3)
+        // ================================================================
         let format = Self::detect_audio_format(audio_bytes);
-        info!("Detected audio format: {}", format);
+        info!("📊 Detected audio format: {}", format);
 
-        // Play the audio
-        match self.audio_player.play_audio(audio_bytes, &format).await {
+        // ================================================================
+        // STEP 2: Decode MP3 to PCM
+        // ================================================================
+        // Only MP3 is supported currently (add other formats later if needed)
+        if format != "mp3" {
+            warn!("⚠️  Non-MP3 format detected: {}. Trying MP3 decode anyway...", format);
+        }
+
+        // TODO: Decode MP3 to PCM
+        // CODE_TEMPLATE:
+        // let decoded = match decode_mp3_to_pcm(audio_bytes) {
+        //     Ok(d) => d,
+        //     Err(e) => {
+        //         error!("✗ MP3 decode failed: {}", e);
+        //         return;
+        //     }
+        // };
+        
+        let decoded = match decode_mp3_to_pcm(audio_bytes) {
+            Ok(d) => d,
+            Err(e) => {
+                error!("✗ MP3 decode failed: {}", e);
+                return;
+            }
+        };
+
+        info!("✓ Decoded audio: {} bytes PCM, {}Hz, {} channels", 
+              decoded.samples.len(), 
+              decoded.sample_rate, 
+              decoded.channels);
+
+        // ================================================================
+        // STEP 3: Publish PCM audio to ROS2
+        // ================================================================
+        // The Unitree GO2 subscribes to the "audiodata" topic and plays it
+        
+        // TODO: Publish to ROS2
+        // CODE_TEMPLATE:
+        // match self.ros_publisher.publish_audio(decoded.samples).await {
+        //     Ok(_) => {
+        //         info!("✓ Audio published to ROS2 successfully");
+        //     }
+        //     Err(e) => {
+        //         error!("✗ Failed to publish to ROS2: {}", e);
+        //     }
+        // }
+        
+        match self.ros_publisher.publish_audio(decoded.samples).await {
             Ok(_) => {
-                info!("✓ Audio playback completed successfully");
+                info!("🎉 Audio published to ROS2 successfully!");
             }
             Err(e) => {
-                error!("✗ Failed to play audio: {}", e);
+                error!("✗ Failed to publish to ROS2: {}", e);
             }
         }
+    }
+    
+    /// Process base64-encoded audio (if server sends as text)
+    /// 
+    /// Some servers send audio as base64-encoded text instead of binary.
+    /// This handles that case: base64 text → raw bytes → MP3 decode → ROS2
+    async fn process_base64_audio(&self, base64_text: &str) {
+        info!("🔓 Decoding base64 audio: {} chars", base64_text.len());
+        
+        // ================================================================
+        // STEP 1: Extract base64 data (skip "data:audio/mp3;base64," if present)
+        // ================================================================
+        let base64_data = if base64_text.contains(";base64,") {
+            // TODO: Split and get the base64 part
+            // CODE_TEMPLATE:
+            // let parts: Vec<&str> = base64_text.split(";base64,").collect();
+            // if parts.len() >= 2 {
+            //     parts[1]
+            // } else {
+            //     base64_text  // No prefix, use as-is
+            // }
+            
+            let parts: Vec<&str> = base64_text.split(";base64,").collect();
+            if parts.len() >= 2 {
+                parts[1]
+            } else {
+                base64_text
+            }
+        } else {
+            base64_text
+        };
+        
+        // ================================================================
+        // STEP 2: Decode base64 to raw bytes
+        // ================================================================
+        // TODO: Decode base64
+        // CODE_TEMPLATE:
+        // let audio_bytes = match general_purpose::STANDARD.decode(base64_data) {
+        //     Ok(bytes) => bytes,
+        //     Err(e) => {
+        //         error!("✗ Base64 decode failed: {}", e);
+        //         return;
+        //     }
+        // };
+        
+        let audio_bytes = match general_purpose::STANDARD.decode(base64_data) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                error!("✗ Base64 decode failed: {}", e);
+                return;
+            }
+        };
+        
+        info!("✓ Decoded base64 to {} bytes", audio_bytes.len());
+        
+        // ================================================================
+        // STEP 3: Process as binary audio (MP3 decode → ROS2 publish)
+        // ================================================================
+        self.process_binary_audio(&audio_bytes).await;
     }
 
     /// Detect audio format from magic bytes
