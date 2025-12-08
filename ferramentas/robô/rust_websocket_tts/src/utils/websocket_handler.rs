@@ -90,21 +90,10 @@ impl WebSocketAudioClient {
     /// # Returns
     /// * `Result<Self>` - Initialized client or error
     pub fn new(url: String) -> Result<Self> {
-        // ================================================================
-        // TODO: Create ROS2 audio publisher
-        // ================================================================
-        // Based on Unitree conventions, the topic is likely "audiodata"
-        // The node name can be anything descriptive
-        
-        // CODE_TEMPLATE:
-        // let ros_publisher = RosAudioPublisher::new(
-        //     "rust_websocket_audio",  // Node name
-        //     "audiodata"              // Topic name (change if you discovered different)
-        // )?;
-        
+        // Create ROS2 audio publisher
         let ros_publisher = RosAudioPublisher::new(
             "rust_websocket_audio",  // Node name (visible in `ros2 node list`)
-            "audiodata"              // Topic name (change to match your GO2 if different)
+            "audiodata"              // Topic name
         )?;
         
         Ok(Self {
@@ -130,8 +119,10 @@ impl WebSocketAudioClient {
         // Send a test message to the backend
         info!("Sending test question to backend...");
         let test_request = TextRequest::new("Olá, como você está?".to_string());
-        let message_json = serde_json::to_string(&test_request)?;
-        write.send(Message::Text(message_json)).await?;
+        let message_json = serde_json::to_string(&test_request)
+            .context("Failed to serialize test message")?;
+        write.send(Message::Text(message_json)).await
+            .context("Failed to send test message to WebSocket")?;
         info!("Test question sent, waiting for response...");
 
         // State tracking for multi-message responses
@@ -260,16 +251,7 @@ impl WebSocketAudioClient {
             warn!("⚠️  Non-MP3 format detected: {}. Trying MP3 decode anyway...", format);
         }
 
-        // TODO: Decode MP3 to PCM
-        // CODE_TEMPLATE:
-        // let decoded = match decode_mp3_to_pcm(audio_bytes) {
-        //     Ok(d) => d,
-        //     Err(e) => {
-        //         error!("✗ MP3 decode failed: {}", e);
-        //         return;
-        //     }
-        // };
-        
+        // Decode MP3 to PCM
         let decoded = match decode_mp3_to_pcm(audio_bytes) {
             Ok(d) => d,
             Err(e) => {
@@ -283,22 +265,7 @@ impl WebSocketAudioClient {
               decoded.sample_rate, 
               decoded.channels);
 
-        // ================================================================
-        // STEP 3: Publish PCM audio to ROS2
-        // ================================================================
-        // The Unitree GO2 subscribes to the "audiodata" topic and plays it
-        
-        // TODO: Publish to ROS2
-        // CODE_TEMPLATE:
-        // match self.ros_publisher.publish_audio(decoded.samples).await {
-        //     Ok(_) => {
-        //         info!("✓ Audio published to ROS2 successfully");
-        //     }
-        //     Err(e) => {
-        //         error!("✗ Failed to publish to ROS2: {}", e);
-        //     }
-        // }
-        
+        // Publish PCM audio to ROS2
         match self.ros_publisher.publish_audio(decoded.samples).await {
             Ok(_) => {
                 info!("🎉 Audio published to ROS2 successfully!");
@@ -316,19 +283,8 @@ impl WebSocketAudioClient {
     async fn process_base64_audio(&self, base64_text: &str) {
         info!("🔓 Decoding base64 audio: {} chars", base64_text.len());
         
-        // ================================================================
-        // STEP 1: Extract base64 data (skip "data:audio/mp3;base64," if present)
-        // ================================================================
+        // Extract base64 data (skip "data:audio/mp3;base64," if present)
         let base64_data = if base64_text.contains(";base64,") {
-            // TODO: Split and get the base64 part
-            // CODE_TEMPLATE:
-            // let parts: Vec<&str> = base64_text.split(";base64,").collect();
-            // if parts.len() >= 2 {
-            //     parts[1]
-            // } else {
-            //     base64_text  // No prefix, use as-is
-            // }
-            
             let parts: Vec<&str> = base64_text.split(";base64,").collect();
             if parts.len() >= 2 {
                 parts[1]
@@ -339,19 +295,7 @@ impl WebSocketAudioClient {
             base64_text
         };
         
-        // ================================================================
-        // STEP 2: Decode base64 to raw bytes
-        // ================================================================
-        // TODO: Decode base64
-        // CODE_TEMPLATE:
-        // let audio_bytes = match general_purpose::STANDARD.decode(base64_data) {
-        //     Ok(bytes) => bytes,
-        //     Err(e) => {
-        //         error!("✗ Base64 decode failed: {}", e);
-        //         return;
-        //     }
-        // };
-        
+        // Decode base64 to raw bytes
         let audio_bytes = match general_purpose::STANDARD.decode(base64_data) {
             Ok(bytes) => bytes,
             Err(e) => {
@@ -362,9 +306,7 @@ impl WebSocketAudioClient {
         
         info!("✓ Decoded base64 to {} bytes", audio_bytes.len());
         
-        // ================================================================
-        // STEP 3: Process as binary audio (MP3 decode → ROS2 publish)
-        // ================================================================
+        // Process as binary audio (MP3 decode → ROS2 publish)
         self.process_binary_audio(&audio_bytes).await;
     }
 

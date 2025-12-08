@@ -50,53 +50,21 @@ pub fn decode_mp3_to_pcm(mp3_bytes: &[u8]) -> Result<DecodedAudio> {
     info!("Starting MP3 decode: {} bytes", mp3_bytes.len());
 
     let cursor = Cursor::new(mp3_bytes.to_vec());
-    
-    
     let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
     
-    // ============================================================================
-    // STEP 3: Create a format hint to help Symphonia detect MP3
-    // ============================================================================
-    // This tells Symphonia "expect MP3 format"
-    // TODO: Uncomment and use:
-    // let mut hint = Hint::new();
-    // hint.with_extension("mp3");
-    
+    // Create a format hint to help Symphonia detect MP3
     let mut hint = Hint::new();
     hint.with_extension("mp3");
     
-    // ============================================================================
-    // STEP 4: Probe the media source to detect format and codec
-    // ============================================================================
-    // This is like sniffing the file header to figure out what format it is
-    // TODO: Uncomment and use:
-    // let probed = symphonia::default::get_probe()
-    //     .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
-    //     .context("Failed to probe MP3 format")?;
-    
+    // Probe the media source to detect format and codec
     let probed = symphonia::default::get_probe()
         .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
         .context("Failed to probe MP3 format")?;
     
-    // ============================================================================
-    // STEP 5: Get the format reader (the thing that reads audio packets)
-    // ============================================================================
-    // TODO: Uncomment:
-    // let mut format_reader = probed.format;
-    
+    // Get the format reader
     let mut format_reader = probed.format;
     
-    // ============================================================================
-    // STEP 6: Find the first audio track
-    // ============================================================================
-    // MP3 files can have multiple tracks (like a CD), we want the default one
-    // TODO: Uncomment and use:
-    // let track = format_reader
-    //     .tracks()
-    //     .iter()
-    //     .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-    //     .ok_or_else(|| anyhow!("No audio tracks found in MP3"))?;
-    
+    // Find the first audio track
     let track = format_reader
         .tracks()
         .iter()
@@ -113,39 +81,18 @@ pub fn decode_mp3_to_pcm(mp3_bytes: &[u8]) -> Result<DecodedAudio> {
     
     info!("📊 Audio info: {}Hz, {} channels", sample_rate, channels);
     
-    // ============================================================================
-    // STEP 7: Create a decoder for this track
-    // ============================================================================
-    // The decoder converts compressed MP3 packets into raw audio samples
-    // TODO: Uncomment:
-    // let mut decoder = symphonia::default::get_codecs()
-    //     .make(&track.codec_params, &DecoderOptions::default())
-    //     .context("Failed to create MP3 decoder")?;
-    
+    // Create a decoder for this track
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
         .context("Failed to create MP3 decoder")?;
     
-    // ============================================================================
-    // STEP 8: Prepare buffer to collect all decoded samples
-    // ============================================================================
-    // We'll accumulate all audio samples here
+    // Prepare buffer to collect all decoded samples
     let mut all_samples: Vec<i16> = Vec::new();
     
-    // ============================================================================
-    // STEP 9: Decode loop - read packets and decode them one by one
-    // ============================================================================
-    // This is the main decode loop
+    // Decode loop - read packets and decode them one by one
     info!("🔄 Decoding MP3 packets...");
     
     loop {
-        // TODO: Read next packet from format reader
-        // CODE_TEMPLATE:
-        // let packet = match format_reader.next_packet() {
-        //     Ok(packet) => packet,
-        //     Err(_) => break, // End of stream
-        // };
-        
         let packet = match format_reader.next_packet() {
             Ok(packet) => packet,
             Err(_) => {
@@ -196,14 +143,6 @@ pub fn decode_mp3_to_pcm(mp3_bytes: &[u8]) -> Result<DecodedAudio> {
 /// Each i16 is converted to 2 bytes in little-endian order:
 /// - Example: i16 value 1000 → bytes [0xE8, 0x03]
 fn samples_to_bytes(samples: &[i16]) -> Vec<u8> {
-    // TODO: Implement conversion
-    // HINT: Use flat_map with to_le_bytes()
-    // CODE_TEMPLATE:
-    // samples
-    //     .iter()
-    //     .flat_map(|&sample| sample.to_le_bytes())
-    //     .collect()
-    
     samples
         .iter()
         .flat_map(|&sample| sample.to_le_bytes())

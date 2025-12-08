@@ -20,7 +20,7 @@ use std::time::Duration;
 // R2R imports for ROS2 functionality
 use r2r::QosProfile;
 
-use crate::ros_audio_msg::AudioData;
+
 
 /// ROS2 Audio Publisher for Unitree GO2
 /// 
@@ -55,46 +55,19 @@ impl RosAudioPublisher {
         info!("   Node name: {}", node_name);
         info!("   Topic: {}", topic_name);
         
-        // ====================================================================
-        // STEP 1: Create ROS2 context
-        // ====================================================================
-        // The context is like the "ROS2 environment" - it manages the connection
-        // TODO: Uncomment and use:
-        // let ctx = r2r::Context::create()
-        //     .context("Failed to create ROS2 context")?;
-        
+        // Create ROS2 context
         let ctx = r2r::Context::create()
             .context("Failed to create ROS2 context - is ROS2 installed?")?;
         
         info!("✓ ROS2 context created");
         
-        // ====================================================================
-        // STEP 2: Create ROS2 node
-        // ====================================================================
-        // The node is like our "radio station" - it's our presence in the ROS2 network
-        // TODO: Uncomment:
-        // let mut node = r2r::Node::create(ctx, node_name, "")
-        //     .context("Failed to create ROS2 node")?;
-        
+        // Create ROS2 node
         let mut node = r2r::Node::create(ctx, node_name, "")
             .context("Failed to create ROS2 node")?;
         
         info!("✓ ROS2 node '{}' created", node_name);
         
-        // ====================================================================
-        // STEP 3: Create publisher for audio data
-        // ====================================================================
-        // The publisher is our "transmitter" - it sends messages to the topic
-        // 
-        // IMPORTANT: We're using ByteMultiArray as a generic message type
-        // This is flexible and works with most ROS2 systems
-        // 
-        // TODO: Uncomment and use:
-        // let publisher = node.create_publisher::<r2r::std_msgs::msg::ByteMultiArray>(
-        //     topic_name,
-        //     QosProfile::default()
-        // )?;
-        
+        // Create publisher for audio data (using ByteMultiArray as generic message type)
         let publisher = node.create_publisher::<r2r::std_msgs::msg::ByteMultiArray>(
             topic_name,
             QosProfile::default()
@@ -102,14 +75,7 @@ impl RosAudioPublisher {
         
         info!("✓ Publisher created on topic '{}'", topic_name);
         
-        // ====================================================================
-        // STEP 4: Wrap in Arc<Mutex<>> for thread safety
-        // ====================================================================
-        // We need this because tokio (async) might access from different threads
-        // TODO: Uncomment:
-        // let node = Arc::new(Mutex::new(node));
-        // let publisher = Arc::new(Mutex::new(publisher));
-        
+        // Wrap in Arc<Mutex<>> for thread safety
         let node = Arc::new(Mutex::new(node));
         let publisher = Arc::new(Mutex::new(publisher));
         
@@ -138,28 +104,11 @@ impl RosAudioPublisher {
         info!("📤 Publishing audio to topic '{}': {} bytes", 
               self.topic_name, pcm_bytes.len());
         
-        // ====================================================================
-        // STEP 1: Create a ByteMultiArray message
-        // ====================================================================
-        // This is a generic ROS2 message type that can hold any byte array
-        // TODO: Uncomment and use:
-        // let mut msg = r2r::std_msgs::msg::ByteMultiArray::default();
-        // msg.data = pcm_bytes;
-        
+        // Create a ByteMultiArray message
         let mut msg = r2r::std_msgs::msg::ByteMultiArray::default();
         msg.data = pcm_bytes;
         
-        // ====================================================================
-        // STEP 2: Publish the message
-        // ====================================================================
-        // This sends the message to the ROS2 topic
-        // TODO: Uncomment:
-        // let publisher = self.publisher.lock()
-        //     .map_err(|e| anyhow!("Failed to lock publisher: {}", e))?;
-        // 
-        // publisher.publish(&msg)
-        //     .context("Failed to publish audio message")?;
-        
+        // Publish the message to ROS2 topic
         let publisher = self.publisher.lock()
             .map_err(|e| anyhow!("Failed to lock publisher: {}", e))?;
         
@@ -168,13 +117,7 @@ impl RosAudioPublisher {
         
         info!("✓ Audio published successfully");
         
-        // ====================================================================
-        // STEP 3: Spin node to process callbacks
-        // ====================================================================
-        // This gives ROS2 a chance to process the message
-        // TODO: Uncomment:
-        // self.spin_once()?;
-        
+        // Spin node to process callbacks
         self.spin_once()?;
         
         Ok(())
@@ -183,16 +126,7 @@ impl RosAudioPublisher {
     /// Process ROS2 callbacks once
     /// 
     /// This should be called periodically to keep ROS2 communication alive.
-    /// It's like "checking the mailbox" for incoming messages and
-    /// "sending outgoing mail".
     pub fn spin_once(&self) -> Result<()> {
-        // TODO: Lock the node and call spin_once
-        // CODE_TEMPLATE:
-        // let mut node = self.node.lock()
-        //     .map_err(|e| anyhow!("Failed to lock node: {}", e))?;
-        // 
-        // node.spin_once(Duration::from_millis(10));
-        
         let mut node = self.node.lock()
             .map_err(|e| anyhow!("Failed to lock node: {}", e))?;
         

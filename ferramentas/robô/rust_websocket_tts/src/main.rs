@@ -1,5 +1,3 @@
-mod audio_decoder;
-mod ros_audio_msg;
 mod mp3_decoder;
 mod utils {
     pub mod websocket_handler;
@@ -9,6 +7,7 @@ mod utils {
 use anyhow::Result;
 use tracing::{info, error, Level};
 use tracing_subscriber;
+use tokio::signal;
 
 use crate::utils::websocket_handler::WebSocketAudioClient;
 
@@ -62,18 +61,33 @@ async fn main() -> Result<()> {
     info!("  → Publish to ROS2 topic 'audiodata'");
     info!("  ← Receive: {{\"done\": true}}");
     info!("");
+    info!("Press Ctrl+C to exit gracefully");
+    info!("");
 
     // Run the WebSocket client (will auto-reconnect on disconnect)
     loop {
-        match ws_client.connect_and_listen().await {
-            Ok(_) => {
-                info!("Connection closed normally");
+        tokio::select! {
+            result = ws_client.connect_and_listen() => {
+                match result {
+                    Ok(_) => {
+                        info!("Connection closed normally");
+                    }
+                    Err(e) => {
+                        error!("Connection error: {}", e);
+                        error!("Retrying in 5 seconds...");
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                    }
+                }
             }
-            Err(e) => {
-                error!("Connection error: {}", e);
-                error!("Retrying in 5 seconds...");
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            _ = signal::ctrl_c() => {
+                info!("");
+                info!("Received shutdown signal (Ctrl+C)");
+                info!("Shutting down gracefully...");
+                break;
             }
         }
     }
+
+    info!("✓ Shutdown complete");
+    Ok(())
 }
