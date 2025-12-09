@@ -36,6 +36,10 @@ impl EmergencyStopClient {
                     id: 123,
                     api_id: 1001, // DAMP
                 },
+                policy: r2r::unitree_api::msg::RequestPolicy {
+                    priority: 255, // Maximum priority (u8)
+                    noreply: false,
+                },
                 ..Default::default()
             },
             ..Default::default()
@@ -55,6 +59,10 @@ impl EmergencyStopClient {
                 identity: r2r::unitree_api::msg::RequestIdentity {
                     id: 123,
                     api_id: 1006, // RECOVER
+                },
+                policy: r2r::unitree_api::msg::RequestPolicy {
+                    priority: 255, 
+                    noreply: false,
                 },
                 ..Default::default()
             },
