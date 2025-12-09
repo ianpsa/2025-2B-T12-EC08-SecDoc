@@ -63,7 +63,6 @@ impl WebClient {
             .route("/emote/dance2", post(handle_dance2))
             .route("/emote/pose", post(handle_pose))
             .route("/emote/scrape", post(handle_scrape))
-            .route("/emote/status", axum::routing::get(get_status))
             .with_state(shared_state);
 
         let listener = tokio::net::TcpListener::bind(&self.addr).await.unwrap();
@@ -77,7 +76,6 @@ impl WebClient {
         info!("  POST   {}/emote/dance2", self.addr);
         info!("  POST   {}/emote/pose", self.addr);
         info!("  POST   {}/emote/scrape", self.addr);
-        info!("  GET    {}/emote/status", self.addr);
         
         if let Err(e) = axum::serve(listener, app).await {
             warn!("Web server error: {}", e);
@@ -174,12 +172,4 @@ where
     info!("WEB: Scrape emote triggered");
     (state.emote_callback)(EmoteCommand::Scrape);
     StatusCode::OK
-}
-
-// Handler: GET /emote/status
-async fn get_status<F>() -> String
-where
-    F: Fn(EmoteCommand) + Send + Sync + 'static,
-{
-    "Robot emote service is running".to_string()
 }
