@@ -5,39 +5,27 @@ After=network.target
 [Service]
 Type=simple
 User=unitree
-Group=dialout
-WorkingDirectory=/opt/emergency-stop
 
-# Script wrapper para carregar ambiente ROS2
-ExecStart=/bin/bash -c 'cd /home/unitree/unitree_ros2 && source setup.sh && export RUST_LOG=info && exec /opt/emergency-stop/bin/rust_serial_emergency_listener'
+WorkingDirectory=/home/unitree/unitree_ros2
+Environment=RUST_LOG=info
 
-# Reiniciar automaticamente em caso de falha
+ExecStart=/bin/bash -c "cd /home/unitree/unitree_ros2 && source setup.sh && exec /home/unitree/2025-2B-T12-EC08-SecDoc/ferramentas/robô/rust_serial_emergency_listener/target/release/rust_s>
+
 Restart=always
 RestartSec=5s
 
-# Permissões para acessar dispositivos seriais
 SupplementaryGroups=dialout tty
 
-# Logging
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=emergency-stop
 
-# Limites de recursos
 LimitNOFILE=65536
 LimitNPROC=4096
 
-# Segurança
 NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=/opt/emergency-stop
-ProtectHome=yes
+ProtectSystem=full
 PrivateTmp=yes
-
-# Timeouts
-TimeoutStartSec=30s
-TimeoutStopSec=10s
 
 [Install]
 WantedBy=multi-user.target
-
