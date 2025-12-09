@@ -1,5 +1,5 @@
 [Unit]
-Description=Emergency Stop Service
+Description=Emote service
 After=network.target
 
 [Service]
@@ -9,7 +9,7 @@ User=unitree
 WorkingDirectory=/home/unitree/unitree_ros2
 Environment=RUST_LOG=info
 
-ExecStart=/bin/bash -c "cd /home/unitree/unitree_ros2 && source setup.sh && exec /home/unitree/2025-2B-T12-EC08-SecDoc/ferramentas/robô/rust_serial_emergency_listener/target/release/rust_serial_emergency_listener
+ExecStart=/bin/bash -c "cd /home/unitree/unitree_ros2 && source setup.sh && exec /home/unitree/2025-2B-T12-EC08-SecDoc/ferramentas/robô/rust_robot_emotes/target/release/rust_emote_listener
 
 Restart=always
 RestartSec=5s
@@ -25,6 +25,7 @@ LimitNPROC=4096
 
 NoNewPrivileges=true
 ProtectSystem=full
+#ProtectHome=yes
 PrivateTmp=yes
 
 [Install]
