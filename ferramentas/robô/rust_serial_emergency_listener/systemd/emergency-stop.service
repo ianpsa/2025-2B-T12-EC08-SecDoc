@@ -9,7 +9,7 @@ User=unitree
 WorkingDirectory=/home/unitree/unitree_ros2
 Environment=RUST_LOG=info
 
-ExecStart=/bin/bash -c "cd /home/unitree/unitree_ros2 && source setup.sh && exec /home/unitree/2025-2B-T12-EC08-SecDoc/ferramentas/robô/rust_serial_emergency_listener/target/release/rust_s>
+ExecStart=/bin/bash -c "cd /home/unitree/unitree_ros2 && source setup.sh && exec /home/unitree/2025-2B-T12-EC08-SecDoc/ferramentas/robô/rust_serial_emergency_listener/target/release/<name>
 
 Restart=always
 RestartSec=5s
