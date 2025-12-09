@@ -4,7 +4,11 @@ use axum::{
     routing::post,
     Router,
 };
+use axum_client_ip::InsecureClientIp;
+use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
@@ -19,6 +23,37 @@ pub enum EmoteCommand {
     Dance2,
     Pose,
     Scrape,
+}
+
+// Rate limiter to track IP addresses and their last request time
+pub struct RateLimiter {
+    requests: Mutex<HashMap<IpAddr, Instant>>,
+    timeout: Duration,
+}
+
+impl RateLimiter {
+    pub fn new(timeout_secs: u64) -> Self {
+        Self {
+            requests: Mutex::new(HashMap::new()),
+            timeout: Duration::from_secs(timeout_secs),
+        }
+    }
+
+    pub async fn check_and_update(&self, ip: IpAddr) -> Result<(), Duration> {
+        let mut requests = self.requests.lock().await;
+        let now = Instant::now();
+
+        if let Some(&last_request) = requests.get(&ip) {
+            let elapsed = now.duration_since(last_request);
+            if elapsed < self.timeout {
+                let remaining = self.timeout - elapsed;
+                return Err(remaining);
+            }
+        }
+
+        requests.insert(ip, now);
+        Ok(())
+    }
 }
 
 pub struct WebClient {
@@ -52,6 +87,7 @@ impl WebClient {
 
         let shared_state = AppState {
             emote_callback: Arc::new(callback),
+            rate_limiter: Arc::new(RateLimiter::new(20)),
         };
 
         let app = Router::new()
@@ -88,6 +124,7 @@ where
     F: Fn(EmoteCommand) + Send + Sync + 'static,
 {
     emote_callback: Arc<F>,
+    rate_limiter: Arc<RateLimiter>,
 }
 
 impl<F> Clone for AppState<F>
@@ -97,79 +134,192 @@ where
     fn clone(&self) -> Self {
         Self {
             emote_callback: Arc::clone(&self.emote_callback),
+            rate_limiter: Arc::clone(&self.rate_limiter),
         }
     }
 }
 
 // Emote handlers
-async fn handle_hello<F>(State(state): State<AppState<F>>) -> StatusCode
+async fn handle_hello<F>(
+    InsecureClientIp(ip): InsecureClientIp,
+    State(state): State<AppState<F>>,
+) -> (StatusCode, String)
 where
     F: Fn(EmoteCommand) + Send + Sync + 'static,
 {
-    info!("WEB: Hello emote triggered");
-    (state.emote_callback)(EmoteCommand::Hello);
-    StatusCode::OK
+    match state.rate_limiter.check_and_update(ip).await {
+        Ok(()) => {
+            info!("WEB: Hello emote triggered from IP: {}", ip);
+            (state.emote_callback)(EmoteCommand::Hello);
+            (StatusCode::OK, "Emote triggered".to_string())
+        }
+        Err(remaining) => {
+            warn!("WEB: Rate limit exceeded for IP: {} ({}s remaining)", ip, remaining.as_secs());
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("Rate limit exceeded. Please wait {} seconds", remaining.as_secs())
+            )
+        }
+    }
 }
 
-async fn handle_stretch<F>(State(state): State<AppState<F>>) -> StatusCode
+async fn handle_stretch<F>(
+    InsecureClientIp(ip): InsecureClientIp,
+    State(state): State<AppState<F>>,
+) -> (StatusCode, String)
 where
     F: Fn(EmoteCommand) + Send + Sync + 'static,
 {
-    info!("WEB: Stretch emote triggered");
-    (state.emote_callback)(EmoteCommand::Stretch);
-    StatusCode::OK
+    match state.rate_limiter.check_and_update(ip).await {
+        Ok(()) => {
+            info!("WEB: Stretch emote triggered from IP: {}", ip);
+            (state.emote_callback)(EmoteCommand::Stretch);
+            (StatusCode::OK, "Emote triggered".to_string())
+        }
+        Err(remaining) => {
+            warn!("WEB: Rate limit exceeded for IP: {} ({}s remaining)", ip, remaining.as_secs());
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("Rate limit exceeded. Please wait {} seconds", remaining.as_secs())
+            )
+        }
+    }
 }
 
-async fn handle_content<F>(State(state): State<AppState<F>>) -> StatusCode
+async fn handle_content<F>(
+    InsecureClientIp(ip): InsecureClientIp,
+    State(state): State<AppState<F>>,
+) -> (StatusCode, String)
 where
     F: Fn(EmoteCommand) + Send + Sync + 'static,
 {
-    info!("WEB: Content emote triggered");
-    (state.emote_callback)(EmoteCommand::Content);
-    StatusCode::OK
+    match state.rate_limiter.check_and_update(ip).await {
+        Ok(()) => {
+            info!("WEB: Content emote triggered from IP: {}", ip);
+            (state.emote_callback)(EmoteCommand::Content);
+            (StatusCode::OK, "Emote triggered".to_string())
+        }
+        Err(remaining) => {
+            warn!("WEB: Rate limit exceeded for IP: {} ({}s remaining)", ip, remaining.as_secs());
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("Rate limit exceeded. Please wait {} seconds", remaining.as_secs())
+            )
+        }
+    }
 }
 
-async fn handle_wallow<F>(State(state): State<AppState<F>>) -> StatusCode
+async fn handle_wallow<F>(
+    InsecureClientIp(ip): InsecureClientIp,
+    State(state): State<AppState<F>>,
+) -> (StatusCode, String)
 where
     F: Fn(EmoteCommand) + Send + Sync + 'static,
 {
-    info!("WEB: Wallow emote triggered");
-    (state.emote_callback)(EmoteCommand::Wallow);
-    StatusCode::OK
+    match state.rate_limiter.check_and_update(ip).await {
+        Ok(()) => {
+            info!("WEB: Wallow emote triggered from IP: {}", ip);
+            (state.emote_callback)(EmoteCommand::Wallow);
+            (StatusCode::OK, "Emote triggered".to_string())
+        }
+        Err(remaining) => {
+            warn!("WEB: Rate limit exceeded for IP: {} ({}s remaining)", ip, remaining.as_secs());
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("Rate limit exceeded. Please wait {} seconds", remaining.as_secs())
+            )
+        }
+    }
 }
 
-async fn handle_dance1<F>(State(state): State<AppState<F>>) -> StatusCode
+async fn handle_dance1<F>(
+    InsecureClientIp(ip): InsecureClientIp,
+    State(state): State<AppState<F>>,
+) -> (StatusCode, String)
 where
     F: Fn(EmoteCommand) + Send + Sync + 'static,
 {
-    info!("WEB: Dance1 emote triggered");
-    (state.emote_callback)(EmoteCommand::Dance1);
-    StatusCode::OK
+    match state.rate_limiter.check_and_update(ip).await {
+        Ok(()) => {
+            info!("WEB: Dance1 emote triggered from IP: {}", ip);
+            (state.emote_callback)(EmoteCommand::Dance1);
+            (StatusCode::OK, "Emote triggered".to_string())
+        }
+        Err(remaining) => {
+            warn!("WEB: Rate limit exceeded for IP: {} ({}s remaining)", ip, remaining.as_secs());
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("Rate limit exceeded. Please wait {} seconds", remaining.as_secs())
+            )
+        }
+    }
 }
 
-async fn handle_dance2<F>(State(state): State<AppState<F>>) -> StatusCode
+async fn handle_dance2<F>(
+    InsecureClientIp(ip): InsecureClientIp,
+    State(state): State<AppState<F>>,
+) -> (StatusCode, String)
 where
     F: Fn(EmoteCommand) + Send + Sync + 'static,
 {
-    info!("WEB: Dance2 emote triggered");
-    (state.emote_callback)(EmoteCommand::Dance2);
-    StatusCode::OK
+    match state.rate_limiter.check_and_update(ip).await {
+        Ok(()) => {
+            info!("WEB: Dance2 emote triggered from IP: {}", ip);
+            (state.emote_callback)(EmoteCommand::Dance2);
+            (StatusCode::OK, "Emote triggered".to_string())
+        }
+        Err(remaining) => {
+            warn!("WEB: Rate limit exceeded for IP: {} ({}s remaining)", ip, remaining.as_secs());
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("Rate limit exceeded. Please wait {} seconds", remaining.as_secs())
+            )
+        }
+    }
 }
 
-async fn handle_pose<F>(State(state): State<AppState<F>>) -> StatusCode
+async fn handle_pose<F>(
+    InsecureClientIp(ip): InsecureClientIp,
+    State(state): State<AppState<F>>,
+) -> (StatusCode, String)
 where
     F: Fn(EmoteCommand) + Send + Sync + 'static,
 {
-    info!("WEB: Pose emote triggered");
-    (state.emote_callback)(EmoteCommand::Pose);
-    StatusCode::OK
+    match state.rate_limiter.check_and_update(ip).await {
+        Ok(()) => {
+            info!("WEB: Pose emote triggered from IP: {}", ip);
+            (state.emote_callback)(EmoteCommand::Pose);
+            (StatusCode::OK, "Emote triggered".to_string())
+        }
+        Err(remaining) => {
+            warn!("WEB: Rate limit exceeded for IP: {} ({}s remaining)", ip, remaining.as_secs());
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("Rate limit exceeded. Please wait {} seconds", remaining.as_secs())
+            )
+        }
+    }
 }
 
-async fn handle_scrape<F>(State(state): State<AppState<F>>) -> StatusCode
+async fn handle_scrape<F>(
+    InsecureClientIp(ip): InsecureClientIp,
+    State(state): State<AppState<F>>,
+) -> (StatusCode, String)
 where
     F: Fn(EmoteCommand) + Send + Sync + 'static,
 {
-    info!("WEB: Scrape emote triggered");
-    (state.emote_callback)(EmoteCommand::Scrape);
-    StatusCode::OK
+    match state.rate_limiter.check_and_update(ip).await {
+        Ok(()) => {
+            info!("WEB: Scrape emote triggered from IP: {}", ip);
+            (state.emote_callback)(EmoteCommand::Scrape);
+            (StatusCode::OK, "Emote triggered".to_string())
+        }
+        Err(remaining) => {
+            warn!("WEB: Rate limit exceeded for IP: {} ({}s remaining)", ip, remaining.as_secs());
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("Rate limit exceeded. Please wait {} seconds", remaining.as_secs())
+            )
+        }
+    }
 }
