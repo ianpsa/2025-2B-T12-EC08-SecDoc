@@ -1,33 +1,22 @@
 [Unit]
-Description=Emergency-button-Service
+Description=Emergency Stop Service
 After=network.target
-# Se você estiver usando um daemon ROS2, adicione:
-# After=ros2.service
-# Requires=ros2.service
 
 [Service]
 Type=simple
 User=unitree
 Group=dialout
-WorkingDirectory=~/emergency-service/
+WorkingDirectory=/opt/emergency-stop
 
-# Caminho para o executável compilado (ajuste conforme necessário)
-ExecStart=rust_serial_emergency_listener
+# Script wrapper para carregar ambiente ROS2
+ExecStart=/bin/bash -c 'cd /home/unitree/unitree_ros2 && source setup.sh && export RUST_LOG=info && exec /opt/emergency-stop/bin/rust_serial_emergency_listener'
 
 # Reiniciar automaticamente em caso de falha
-Restart=on-failure
-RestartSec=2s
-
-Environment="ROS_DOMAIN_ID=0"
-Environment="RMW_IMPLEMENTATION=rmw_cyclonedds_cpp"
-# Adicione outras variáveis ROS2 necessárias:
-# Environment="ROS_LOCALHOST_ONLY=1"
-
-# Source do ROS2 setup (ajuste o caminho conforme sua instalação)
-ExecStartPre=/bin/bash -c 'source /opt/ros/foxy/setup.bash'
+Restart=always
+RestartSec=5s
 
 # Permissões para acessar dispositivos seriais
-SupplementaryGroups=dialout
+SupplementaryGroups=dialout tty
 
 # Logging
 StandardOutput=journal
@@ -38,10 +27,16 @@ SyslogIdentifier=emergency-stop
 LimitNOFILE=65536
 LimitNPROC=4096
 
-# Segurança (opcional - ajuste conforme necessário)
+# Segurança
+NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=read-only
-# PrivateTmp=yes
+ReadWritePaths=/opt/emergency-stop
+ProtectHome=yes
+PrivateTmp=yes
+
+# Timeouts
+TimeoutStartSec=30s
+TimeoutStopSec=10s
 
 [Install]
 WantedBy=multi-user.target

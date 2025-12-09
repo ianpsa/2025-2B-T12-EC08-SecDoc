@@ -8,6 +8,11 @@ pub struct EmergencyStopClient {
     pub node: Node,
 }
 
+pub struct RecoverFromFall {
+    pub publisher: Publisher<Request>,
+    pub node: Node,
+}
+
 impl EmergencyStopClient {
     pub fn new(node_name: &str, topic_name: &str) -> Result<Self, Box<dyn std::error::Error>> {
         info!(
@@ -22,14 +27,7 @@ impl EmergencyStopClient {
         Ok(EmergencyStopClient { publisher, node })
     }
 
-    pub async fn trigger_emergency_stop(
-        &self,
-        state: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if !state {
-            return Ok(());
-        }
-
+    pub async fn trigger_emergency_stop(&self, _state: bool) -> Result<(), Box<dyn std::error::Error>> {
         info!("Emergency button pressed! Triggering stop...");
 
         let msg = Request {
@@ -37,6 +35,10 @@ impl EmergencyStopClient {
                 identity: r2r::unitree_api::msg::RequestIdentity {
                     id: 123,
                     api_id: 1001, // DAMP
+                },
+                policy: r2r::unitree_api::msg::RequestPolicy {
+                    priority: 255, // Maximum priority (u8)
+                    noreply: false,
                 },
                 ..Default::default()
             },
@@ -46,6 +48,30 @@ impl EmergencyStopClient {
         self.publisher.publish(&msg)?;
 
         error!("Emergency stop sent sucessfully!");
+        Ok(())
+    }
+
+    pub async fn trigger_recovery(&self) -> Result<(), Box<dyn std::error::Error>> {
+        info!("Recovery command received! Triggering robot recovery...");
+
+        let msg = Request {
+            header: r2r::unitree_api::msg::RequestHeader {
+                identity: r2r::unitree_api::msg::RequestIdentity {
+                    id: 123,
+                    api_id: 1006, // RECOVER
+                },
+                policy: r2r::unitree_api::msg::RequestPolicy {
+                    priority: 255, 
+                    noreply: false,
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        self.publisher.publish(&msg)?;
+
+        info!("Recovery command sent successfully!");
         Ok(())
     }
 
@@ -66,4 +92,8 @@ impl EmergencyStopClient {
 
         Ok(())
     }
+}
+
+impl RecoverFromFall {
+    pub fn new() {}
 }

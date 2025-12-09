@@ -1,0 +1,27 @@
+[package]
+name = "rust_websocket_tts"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+# WebSocket support
+tokio-tungstenite = "0.21"
+futures-util = "0.3"
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Base64 decoding
+base64 = "0.21"
+# Audio playback
+rodio = "0.17"
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+[dev-dependencies]
+# TODO: Add test dependencies if needed
