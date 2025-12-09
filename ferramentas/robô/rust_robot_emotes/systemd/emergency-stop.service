@@ -1,0 +1,32 @@
+[Unit]
+Description=Emote service
+After=network.target
+
+[Service]
+Type=simple
+User=unitree
+
+WorkingDirectory=/home/unitree/unitree_ros2
+Environment=RUST_LOG=info
+
+ExecStart=/bin/bash -c "cd /home/unitree/unitree_ros2 && source setup.sh && exec /home/unitree/2025-2B-T12-EC08-SecDoc/ferramentas/robô/rust_robot_emotes/target/release/rust_emote_listener
+
+Restart=always
+RestartSec=5s
+
+SupplementaryGroups=dialout tty
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=emergency-stop
+
+LimitNOFILE=65536
+LimitNPROC=4096
+
+NoNewPrivileges=true
+ProtectSystem=full
+#ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

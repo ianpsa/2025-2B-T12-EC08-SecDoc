@@ -1,0 +1,14 @@
+# Configuração do Serviço de Botão de Emergência
+
+# Porta serial onde o botão de emergência está conectado
+serial_port: "/dev/ttyACM0"
+
+# Taxa de baud
+baud_rate: 115200
+
+# O Tópico ROS2 para comandos de API (Unitree Go2 geralmente usa api/sport/request)
+# Se estiver usando a ponte padrão unitree_ros2, pode ser necessário ajustar este tópico
+ros_topic_name: "/api/sport/request"
+
+# Namespace do nó ROS2 deste serviço
+ros_namespace: "emergency_stop"
