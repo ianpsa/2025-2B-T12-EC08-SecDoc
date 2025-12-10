@@ -28,7 +28,7 @@ impl RobotClient {
             header: r2r::unitree_api::msg::RequestHeader {
                 identity: r2r::unitree_api::msg::RequestIdentity {
                     id: 123,
-                    api_id.into(),
+                    api_id: api_id.into(),
                 },
                 policy: r2r::unitree_api::msg::RequestPolicy {
                     priority: 1, // Lowest priority

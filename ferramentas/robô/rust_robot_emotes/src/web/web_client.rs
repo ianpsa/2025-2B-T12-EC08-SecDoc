@@ -4,9 +4,8 @@ use axum::{
     routing::post,
     Router,
 };
-use axum_client_ip::InsecureClientIp;
-use std::collections::HashMap;
-use std::net::IpAddr;
+use axum_client_ip::{InsecureClientIp, SecureClientIpSource};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
@@ -25,33 +24,32 @@ pub enum EmoteCommand {
     Scrape,
 }
 
-// Rate limiter to track IP addresses and their last request time
 pub struct RateLimiter {
-    requests: Mutex<HashMap<IpAddr, Instant>>,
+    last_request: Mutex<Option<Instant>>,
     timeout: Duration,
 }
 
 impl RateLimiter {
     pub fn new(timeout_secs: u64) -> Self {
         Self {
-            requests: Mutex::new(HashMap::new()),
+            last_request: Mutex::new(None),
             timeout: Duration::from_secs(timeout_secs),
         }
     }
 
     pub async fn check_and_update(&self, ip: IpAddr) -> Result<(), Duration> {
-        let mut requests = self.requests.lock().await;
+        let mut last_request = self.last_request.lock().await;
         let now = Instant::now();
 
-        if let Some(&last_request) = requests.get(&ip) {
-            let elapsed = now.duration_since(last_request);
+        if let Some(last_request_time) = *last_request {
+            let elapsed = now.duration_since(last_request_time);
             if elapsed < self.timeout {
                 let remaining = self.timeout - elapsed;
                 return Err(remaining);
             }
         }
 
-        requests.insert(ip, now);
+        *last_request = Some(now);
         Ok(())
     }
 }
@@ -99,6 +97,7 @@ impl WebClient {
             .route("/emote/dance2", post(handle_dance2))
             .route("/emote/pose", post(handle_pose))
             .route("/emote/scrape", post(handle_scrape))
+            .layer(SecureClientIpSource::ConnectInfo.into_extension())
             .with_state(shared_state);
 
         info!("Web emote endpoints ready:");
@@ -112,7 +111,10 @@ impl WebClient {
         info!("  POST   {}/emote/scrape", self.addr);
         
         let listener = tokio::net::TcpListener::bind(&self.addr).await.unwrap();
-        if let Err(e) = axum::serve(listener, app).await {
+        if let Err(e) = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>()
+        ).await {
             warn!("Web server error: {}", e);
         }
     }

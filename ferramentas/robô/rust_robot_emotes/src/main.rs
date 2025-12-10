@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Starting robot emotes service");
 
-    let config_content = std::fs::read_to_string("/config/config.yaml")?;
+    let config_content = std::fs::read_to_string("config/config.yaml")?;
     let config: Config = serde_yaml::from_str(&config_content)?;
 
     let ros_client = Arc::new(Mutex::new(RobotClient::new(
@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "/api/sport/request",
     )?));
 
-    let web_client = WebClient::new("0.0.0.0:3000");
+    let web_client = WebClient::new("0.0.0.0:3001");
 
     let ros_client_spin = Arc::clone(&ros_client);
     tokio::spawn(async move {
@@ -77,12 +77,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("System initialized. Waiting for Web signals...");
 
-    // Canal para enviar comandos ROS de forma thread-safe (blocking channel)
     let (tx, rx) = mpsc::channel::<RosCommand>();
     let rx = Arc::new(StdMutex::new(rx));
-    
-    // Thread separada que processa comandos ROS (std::thread, não tokio::spawn!)
-    // Isso resolve o problema Send/Sync porque não cruza boundary do tokio
+
     let ros_for_commands = Arc::clone(&ros_client);
     let rx_clone = Arc::clone(&rx);
     
