@@ -1,7 +1,6 @@
 use r2r::unitree_api::msg::Request;
 use r2r::{Node, Publisher, QosProfile};
-use std::sync::{Arc, Mutex};
-use tracing::{error, info};
+use tracing::info;
 
 pub struct RobotClient {
     pub publisher: Publisher<Request>,

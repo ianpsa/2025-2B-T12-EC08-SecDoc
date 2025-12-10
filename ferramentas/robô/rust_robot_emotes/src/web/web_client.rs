@@ -101,8 +101,6 @@ impl WebClient {
             .route("/emote/scrape", post(handle_scrape))
             .with_state(shared_state);
 
-        let listener = tokio::net::TcpListener::bind(&self.addr).await.unwrap();
-        
         info!("Web emote endpoints ready:");
         info!("  POST   {}/emote/hello", self.addr);
         info!("  POST   {}/emote/stretch", self.addr);
@@ -113,6 +111,7 @@ impl WebClient {
         info!("  POST   {}/emote/pose", self.addr);
         info!("  POST   {}/emote/scrape", self.addr);
         
+        let listener = tokio::net::TcpListener::bind(&self.addr).await.unwrap();
         if let Err(e) = axum::serve(listener, app).await {
             warn!("Web server error: {}", e);
         }
