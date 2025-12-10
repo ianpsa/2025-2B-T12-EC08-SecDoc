@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Starting robot emotes service");
 
-    let config_content = std::fs::read_to_string("config/config.yaml")?;
+    let config_content = std::fs::read_to_string("/config/config.yaml")?;
     let config: Config = serde_yaml::from_str(&config_content)?;
 
     let ros_client = Arc::new(Mutex::new(RobotClient::new(
