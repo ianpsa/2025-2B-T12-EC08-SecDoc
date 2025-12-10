@@ -4,8 +4,8 @@ use axum::{
     routing::post,
     Router,
 };
-use axum_client_ip::InsecureClientIp;
-use std::net::IpAddr;
+use axum_client_ip::{InsecureClientIp, SecureClientIpSource};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
@@ -97,6 +97,7 @@ impl WebClient {
             .route("/emote/dance2", post(handle_dance2))
             .route("/emote/pose", post(handle_pose))
             .route("/emote/scrape", post(handle_scrape))
+            .layer(SecureClientIpSource::ConnectInfo.into_extension())
             .with_state(shared_state);
 
         info!("Web emote endpoints ready:");
@@ -110,7 +111,10 @@ impl WebClient {
         info!("  POST   {}/emote/scrape", self.addr);
         
         let listener = tokio::net::TcpListener::bind(&self.addr).await.unwrap();
-        if let Err(e) = axum::serve(listener, app).await {
+        if let Err(e) = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>()
+        ).await {
             warn!("Web server error: {}", e);
         }
     }
