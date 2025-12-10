@@ -77,12 +77,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("System initialized. Waiting for Web signals...");
 
-    // Canal para enviar comandos ROS de forma thread-safe (blocking channel)
     let (tx, rx) = mpsc::channel::<RosCommand>();
     let rx = Arc::new(StdMutex::new(rx));
-    
-    // Thread separada que processa comandos ROS (std::thread, não tokio::spawn!)
-    // Isso resolve o problema Send/Sync porque não cruza boundary do tokio
+
     let ros_for_commands = Arc::clone(&ros_client);
     let rx_clone = Arc::clone(&rx);
     
