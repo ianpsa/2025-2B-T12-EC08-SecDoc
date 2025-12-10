@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "/api/sport/request",
     )?));
 
-    let web_client = WebClient::new("0.0.0.0:3000");
+    let web_client = WebClient::new("0.0.0.0:3001");
 
     let ros_client_spin = Arc::clone(&ros_client);
     tokio::spawn(async move {
