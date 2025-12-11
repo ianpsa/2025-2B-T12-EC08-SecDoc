@@ -1,8 +1,5 @@
 /target
-test_server.py
-.venv
-.ruff_cache
-/examples
-*.lock
-client_example.py
-*txt
+/.ruff_cache
+requirements.txt
+send_audio.py
+Cargo.lock
