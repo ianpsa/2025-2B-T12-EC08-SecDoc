@@ -1,4 +1,4 @@
-use ffmpeg_next::{format, codec, media};
+use ffmpeg_next::{format, media};
 use ffmpeg_next::software::resampling;
 use std::io::Write;
 
@@ -67,7 +67,7 @@ pub fn decode_to_pcm(audio_data: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::error:
     // Write audio data to a temporary file since ffmpeg-next requires a file path
     let temp_path = format!("/tmp/audio_{}.{}", std::process::id(), extension);
     let mut file = std::fs::File::create(&temp_path)?;
-    file.write_all(&mp3_data)?;
+    file.write_all(&audio_data)?;
     drop(file); // Ensure file is closed
     
     // Create input context from file
