@@ -30,9 +30,12 @@ async fn handle_connection(
     while let Some(msg) = read.next().await {
         match msg? {
             Message::Text(text) => {
+                println!("Received text message ({} chars)", text.len());
                 // Decode base64 to MP3 bytes
                 use base64::Engine;
                 let mp3_data = base64::engine::general_purpose::STANDARD.decode(text)?;
+                
+                println!("Decoded {} bytes from base64", mp3_data.len());
                 
                 // Send to processing pipeline
                 if audio_sender.send(mp3_data).await.is_err() {
@@ -41,7 +44,8 @@ async fn handle_connection(
                 }
             }
             Message::Binary(data) => {
-                // If binary data is sent directly (already MP3)
+                println!("Received binary message ({} bytes)", data.len());
+                // If binary data is sent directly
                 if audio_sender.send(data.to_vec()).await.is_err() {
                     eprintln!("Failed to send audio data to pipeline");
                     break;

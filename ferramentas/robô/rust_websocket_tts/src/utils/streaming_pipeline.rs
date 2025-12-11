@@ -9,12 +9,21 @@ pub async fn start_pipeline(
     println!("Audio processing pipeline started");
     
     while let Some(audio_data) = audio_receiver.recv().await {
+        println!("Received {} bytes of audio data", audio_data.len());
+        
         // Process audio (handles both encoded and raw PCM)
         match audio_decoder::process_audio(audio_data) {
             Ok(pcm_data) => {
+                println!("Processed {} bytes of PCM data", pcm_data.len());
+                
                 // Publish to ROS
-                if let Err(e) = ros_interface::publish_audio(&publisher, pcm_data) {
-                    eprintln!("Failed to publish audio: {}", e);
+                match ros_interface::publish_audio(&publisher, pcm_data) {
+                    Ok(_) => {
+                        println!("Successfully published audio to ROS");
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to publish audio: {}", e);
+                    }
                 }
             }
             Err(e) => {

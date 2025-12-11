@@ -41,9 +41,11 @@ pub fn is_raw_pcm(data: &[u8]) -> bool {
 pub fn process_audio(audio_data: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     if is_raw_pcm(&audio_data) {
         // Already PCM, return as-is
+        println!("Detected raw PCM data ({} bytes), passing through", audio_data.len());
         Ok(audio_data)
     } else {
         // Encoded audio, decode it
+        println!("Detected encoded audio ({} bytes), decoding...", audio_data.len());
         decode_to_pcm(audio_data)
     }
 }
