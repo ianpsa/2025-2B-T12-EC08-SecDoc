@@ -1,11 +1,18 @@
 use ffmpeg_next::{format, codec, media};
 use ffmpeg_next::software::resampling;
+use std::io::Write;
 
 pub fn decode_mp3_to_pcm(mp3_data: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     ffmpeg_next::init()?;
     
-    // Create input context from memory buffer
-    let mut input = format::input(&std::io::Cursor::new(mp3_data))?;
+    // Write MP3 data to a temporary file since ffmpeg-next requires a file path
+    let temp_path = format!("/tmp/audio_{}.mp3", std::process::id());
+    let mut file = std::fs::File::create(&temp_path)?;
+    file.write_all(&mp3_data)?;
+    drop(file); // Ensure file is closed
+    
+    // Create input context from file
+    let mut input = format::input(&temp_path)?;
     
     // Find audio stream
     let input_stream = input
@@ -56,6 +63,9 @@ pub fn decode_mp3_to_pcm(mp3_data: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::erro
         let data = resampled.data(0);
         pcm_output.extend_from_slice(data);
     }
+    
+    // Clean up temporary file
+    let _ = std::fs::remove_file(&temp_path);
     
     Ok(pcm_output)
 }

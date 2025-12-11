@@ -8,7 +8,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting audio WebSocket to ROS service...");
     
     // Create ROS node and publisher
-    let (mut node, publisher) = ros_interface::create_node_and_publisher()?;
+    let (mut node, publisher) = ros_interface::create_node_and_publisher()
+        .map_err(|e| -> Box<dyn std::error::Error> { format!("Failed to create ROS node: {}", e).into() })?;
     
     // Create channel for communication between WebSocket and processing pipeline
     let (audio_sender, audio_receiver) = mpsc::channel::<Vec<u8>>(100);
