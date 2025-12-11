@@ -8,9 +8,9 @@ pub async fn start_pipeline(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Audio processing pipeline started");
     
-    while let Some(mp3_data) = audio_receiver.recv().await {
-        // Decode MP3 to PCM
-        match audio_decoder::decode_mp3_to_pcm(mp3_data) {
+    while let Some(audio_data) = audio_receiver.recv().await {
+        // Process audio (handles both encoded and raw PCM)
+        match audio_decoder::process_audio(audio_data) {
             Ok(pcm_data) => {
                 // Publish to ROS
                 if let Err(e) = ros_interface::publish_audio(&publisher, pcm_data) {
@@ -18,7 +18,7 @@ pub async fn start_pipeline(
                 }
             }
             Err(e) => {
-                eprintln!("Failed to decode audio: {}", e);
+                eprintln!("Failed to process audio: {}", e);
             }
         }
     }
