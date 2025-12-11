@@ -27,9 +27,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         streaming_pipeline::start_pipeline(audio_receiver, publisher_clone).await
     });
     
-    // Start WebSocket server (this blocks)
+    // Start WebSocket server (listens on all interfaces)
     let websocket_handle = tokio::spawn(async move {
-        websocket_server::start_websocket_server("10.140.0.11:8080", audio_sender).await
+        websocket_server::start_websocket_server("0.0.0.0:8080", audio_sender).await
     });
     
     // Wait for all tasks
