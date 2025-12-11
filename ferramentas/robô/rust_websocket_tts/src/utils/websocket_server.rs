@@ -1,12 +1,12 @@
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
-use futures_util::{StreamExt, SinkExt};
+use futures_util::StreamExt;
 use tokio::sync::mpsc;
 
 pub async fn start_websocket_server(
     addr: &str,
     audio_sender: mpsc::Sender<Vec<u8>>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = TcpListener::bind(addr).await?;
     println!("WebSocket server listening on: {}", addr);
     
@@ -21,9 +21,9 @@ pub async fn start_websocket_server(
 async fn handle_connection(
     stream: TcpStream,
     audio_sender: mpsc::Sender<Vec<u8>>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ws_stream = accept_async(stream).await?;
-    let (mut write, mut read) = ws_stream.split();
+    let (_write, mut read) = ws_stream.split();
     
     println!("New WebSocket connection established");
     
@@ -31,7 +31,8 @@ async fn handle_connection(
         match msg? {
             Message::Text(text) => {
                 // Decode base64 to MP3 bytes
-                let mp3_data = base64::decode(text)?;
+                use base64::Engine;
+                let mp3_data = base64::engine::general_purpose::STANDARD.decode(text)?;
                 
                 // Send to processing pipeline
                 if audio_sender.send(mp3_data).await.is_err() {
@@ -41,7 +42,7 @@ async fn handle_connection(
             }
             Message::Binary(data) => {
                 // If binary data is sent directly (already MP3)
-                if audio_sender.send(data).await.is_err() {
+                if audio_sender.send(data.to_vec()).await.is_err() {
                     eprintln!("Failed to send audio data to pipeline");
                     break;
                 }

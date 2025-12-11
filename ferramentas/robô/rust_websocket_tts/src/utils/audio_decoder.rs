@@ -1,8 +1,8 @@
-use ffmpeg::{format, codec, media};
-use ffmpeg::software::resampling;
+use ffmpeg_next::{format, codec, media};
+use ffmpeg_next::software::resampling;
 
-pub fn decode_mp3_to_pcm(mp3_data: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    ffmpeg::init()?;
+pub fn decode_mp3_to_pcm(mp3_data: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    ffmpeg_next::init()?;
     
     // Create input context from memory buffer
     let mut input = format::input(&std::io::Cursor::new(mp3_data))?;
@@ -15,7 +15,7 @@ pub fn decode_mp3_to_pcm(mp3_data: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::erro
     let stream_index = input_stream.index();
     
     // Get decoder
-    let context_decoder = ffmpeg::codec::context::Context::from_parameters(input_stream.parameters())?;
+    let context_decoder = ffmpeg_next::codec::context::Context::from_parameters(input_stream.parameters())?;
     let mut decoder = context_decoder.decoder().audio()?;
     
     // Setup resampler to PCM 16-bit
@@ -34,10 +34,10 @@ pub fn decode_mp3_to_pcm(mp3_data: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::erro
     for (stream, packet) in input.packets() {
         if stream.index() == stream_index {
             decoder.send_packet(&packet)?;
-            let mut decoded_frame = ffmpeg::util::frame::Audio::empty();
+            let mut decoded_frame = ffmpeg_next::util::frame::Audio::empty();
             
             while decoder.receive_frame(&mut decoded_frame).is_ok() {
-                let mut resampled = ffmpeg::util::frame::Audio::empty();
+                let mut resampled = ffmpeg_next::util::frame::Audio::empty();
                 resampler.run(&decoded_frame, &mut resampled)?;
                 
                 // Convert samples to bytes
@@ -49,9 +49,9 @@ pub fn decode_mp3_to_pcm(mp3_data: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::erro
     
     // Flush decoder
     decoder.send_eof()?;
-    let mut decoded_frame = ffmpeg::util::frame::Audio::empty();
+    let mut decoded_frame = ffmpeg_next::util::frame::Audio::empty();
     while decoder.receive_frame(&mut decoded_frame).is_ok() {
-        let mut resampled = ffmpeg::util::frame::Audio::empty();
+        let mut resampled = ffmpeg_next::util::frame::Audio::empty();
         resampler.run(&decoded_frame, &mut resampled)?;
         let data = resampled.data(0);
         pcm_output.extend_from_slice(data);

@@ -4,8 +4,8 @@ use crate::utils::{audio_decoder, ros_interface};
 
 pub async fn start_pipeline(
     mut audio_receiver: mpsc::Receiver<Vec<u8>>,
-    publisher: Publisher<unitree_go::msg::AudioData>,
-) -> Result<(), Box<dyn std::error::Error>> {
+    publisher: Publisher<r2r::unitree_go::msg::AudioData>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Audio processing pipeline started");
     
     while let Some(mp3_data) = audio_receiver.recv().await {
