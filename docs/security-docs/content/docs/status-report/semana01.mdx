@@ -1,0 +1,52 @@
+---
+title: Status Report
+description: Status Report Core Team
+---
+
+### **Relatório de Status: Otimização de Rede e Funcionalidades do Robô**
+
+#### **1. Resumo**
+Neste período, focamos em duas frentes principais:
+
+1.  **Estabilidade do Sistema:** Otimização do middleware de comunicação (**Cyclone/DS**).
+2.  **Novas Funcionalidades:** Implementação de movimentos do robô e testes de segurança.
+
+---
+
+#### **2. Atividades Realizadas (08/12 - Otimização de Rede)**
+
+**O Contexto:**
+
+Trabalhamos na manutenção do **DDS (Data Distribution Service)**, que é a "espinha dorsal" de comunicação do robô, responsável por fazer todos os componentes conversarem entre si. Especificamente, ajustamos o **Cyclone**, o software que gerencia esse tráfego de dados.
+
+**O Problema:**
+
+Identificamos lentidão durante os testes de rede.
+
+* **Causa:** O **Cyclone** estava configurado para exigir uma "confirmação manual" a cada pacote de dados recebido, travando a fila de processamento no protocolo DS.
+* **Solução:** Removemos essa exigência de confirmação no Cyclone. Agora, o sistema processa os dados de forma contínua. A confiabilidade continua garantida, pois o próprio protocolo DS possui mecanismos automáticos para recuperar dados perdidos, se necessário.
+* **Resultado:** O fluxo de dados foi normalizado e a latência resolvida.
+
+---
+
+#### **3. Novas Funcionalidades e Segurança (09/12)**
+
+**Módulo de Expressões (Emojis):**
+
+* O robô recebeu novos comandos de interação física através da rede DS. Agora ele pode executar ações como **"Dizer Olá"**, **"Dar Tchau" (Wave)** e etc.
+
+**Integração com Botão de Emergência:**
+
+* Configuramos os canais de comunicação do Cyclone com níveis de prioridade distintos para garantir a segurança:
+    * **Prioridade Máxima:** Dados do Botão de Emergência.
+    * **Prioridade Mínima:** Dados de diversão (Danças e Emojis).
+
+---
+
+#### **4. Ponto de Atenção Crítico (Risco Identificado)**
+
+Durante os testes de integração, descobrimos uma limitação importante que requer correção imediata:
+
+* **O Comportamento Atual:** Embora o sinal do botão de emergência chegue com prioridade máxima na rede, se o robô **já estiver executando** uma animação física (como a dança), o motor de movimento ignora a ordem de parada até terminar a dança completa.
+* **Risco:** Atualmente, **não é possível parar o robô instantaneamente** no meio de uma ação de dança.
+* **Próximo Passo:** A equipe de desenvolvimento deve criar uma "interrupção forçada", garantindo que o botão de emergência cancele qualquer movimento físico imediatamente.
