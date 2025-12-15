@@ -1,0 +1,48 @@
+---
+title: Status Report 02
+description: Status Report Core Team
+---
+
+### **Relatório de Status Integrado: Navegação Autônoma e Sistema de Waypoints**
+
+#### **1. Resumo**
+
+Nas últimas duas semanas, houve um grande avanço rumo à autonomia do robô. Desenvolvemos um **Sistema de Waypoints** (Pontos de Navegação) que permite ao robô realizar tours autônomos pelo primeiro andar.
+O foco foi traduzir as ferramentas visuais que nós usamos (telas de controle) para uma linguagem de código que o robô entenda sozinho, permitindo que ele calcule suas próprias rotas.
+
+---
+
+#### **2. Glossário de Tecnologias**
+
+* **Waypoints:** São "marcos digitais" ou "pontos de parada". Imagine como paradas de ônibus invisíveis no mapa que dizem ao robô: "Vá do ponto A ao ponto B".
+* **BFS e DFS:** São algoritmos que o robô usa para decidir o caminho. É como ele resolve um labirinto:
+    * *BFS (Busca em Largura):* Ele olha para todos os lados próximos antes de ir longe.
+    * *DFS (Busca em Profundidade):* Ele vai até o fundo de um corredor para ver se tem saída.
+* **Wall Follower:** Uma técnica onde o robô "segue a parede" para mapear e explorar o perímetro de um lugar desconhecida.
+* **Abstração do Rviz:** O Rviz é a tela que os humanos usam para ver o mapa. "Abstrair" significa que tiramos a dependência dessa tela. Agora, o robô lê o mapa internamente via código, sem precisar que um humano fique olhando o gráfico.
+
+---
+
+#### **3. O Grande Avanço: Sistema de Waypoints**
+
+Trabalhando em conjunto com o time de **Back-end** e a equipe de **Segurança**, implementamos a lógica que permite ao robô fazer o **Tour por conta própria**.
+
+* **Como funcionava antes:** Dependíamos muito da visualização humana e controle direto.
+* **Como funciona agora:**
+    1.  O robô utiliza o **SLAM** e o **Nav2** para saber onde está.
+    2.  Aplicamos algoritmos de exploração (**BFS, DFS e Wall Follower**) para que ele entenda o ambiente.
+    3.  O sistema traça o **"Melhor Caminho"** entre dois Waypoints automaticamente.
+
+#### **4. Glória**
+
+O maior desafio vencido foi a **Abstração do Primeiro Andar**.
+
+Pegamos as informações visuais do Rviz e as transformamos em dados brutos de código.
+
+* **Impacto:** Isso permite que o robô navegue pelo primeiro andar sem supervisão visual constante. Ele "memorizou" o andar e sabe calcular a rota mais eficiente entre os pontos de interesse.
+
+---
+
+#### **5. Próximos Passos**
+
+* Fazer testes do **Tour Completo** no primeiro andar em ambiente real para validar se o robô escolhe as rotas otimizadas sem falhas.
