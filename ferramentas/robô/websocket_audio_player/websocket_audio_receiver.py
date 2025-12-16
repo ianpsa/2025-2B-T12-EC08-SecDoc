@@ -77,20 +77,21 @@ class WebSocketAudioStreamer:
 
     def is_duplicate(self, audio_bytes: bytes) -> bool:
         """Check if this specific audio data was processed recently"""
+        # Create a unique fingerprint for this audio file
         audio_hash = hashlib.md5(audio_bytes).hexdigest()
         current_time = time.time()
         
-        # specific deduplication logic
+        # Check if we saw this fingerprint recently
         if audio_hash in self.processed_hashes:
             last_time = self.processed_hashes[audio_hash]
             if current_time - last_time < DEDUPLICATION_WINDOW:
                 logger.warning(f"⚠️  Duplicate audio ignored (received {current_time - last_time:.2f}s ago)")
                 return True
         
-        # Update cache and cleanup old entries
+        # Save fingerprint and current time
         self.processed_hashes[audio_hash] = current_time
         
-        # Optional: cleanup dict if it gets too big
+        # Cleanup old memory so the list doesn't grow forever
         if len(self.processed_hashes) > 100:
             cutoff = current_time - DEDUPLICATION_WINDOW
             self.processed_hashes = {k: v for k, v in self.processed_hashes.items() if v > cutoff}
@@ -107,8 +108,10 @@ class WebSocketAudioStreamer:
                 # Decode and check for duplicates BEFORE converting
                 try:
                     audio_bytes = base64.b64decode(audio_data_b64)
+                    
                     if not self.is_duplicate(audio_bytes):
                         await self.convert_and_play_audio(audio_bytes, audio_format)
+                        
                 except Exception as e:
                     logger.error(f"Error preparing audio: {e}")
 
@@ -242,6 +245,7 @@ class WebSocketAudioStreamer:
         finally:
             shutil.rmtree(self.temp_dir, ignore_errors=True)
 
+
 async def main():
     if len(sys.argv) < 3:
         print("Usage: python receiver.py <robot_ip> <websocket_url>")
@@ -249,6 +253,7 @@ async def main():
 
     streamer = WebSocketAudioStreamer(sys.argv[1], sys.argv[2])
     await streamer.run()
+
 
 if __name__ == "__main__":
     try:
