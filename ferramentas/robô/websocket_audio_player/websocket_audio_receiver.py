@@ -6,6 +6,7 @@ import tempfile
 import os
 import sys
 import websockets
+from pydub import AudioSegment
 from unitree_webrtc_connect.webrtc_driver import (
     UnitreeWebRTCConnection,
     WebRTCConnectionMethod,
@@ -17,22 +18,21 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class WebSocketAudioPlayer:
-    def __init__(self, robot_ip: str, ws_host: str = "0.0.0.0", ws_port: int = 8765):
+class WebSocketAudioStreamer:
+    def __init__(self, robot_ip: str, websocket_url: str):
         """
-        Initialize WebSocket Audio Player
+        Initialize WebSocket Audio Streamer
 
         Args:
             robot_ip: IP address of the Unitree robot
-            ws_host: WebSocket server host (default: 0.0.0.0)
-            ws_port: WebSocket server port (default: 8765)
+            websocket_url: WebSocket server URL to connect to (e.g., ws://server:8765)
         """
         self.robot_ip = robot_ip
-        self.ws_host = ws_host
-        self.ws_port = ws_port
+        self.websocket_url = websocket_url
         self.webrtc_conn = None
         self.audio_hub = None
         self.temp_dir = tempfile.mkdtemp()
+        self.is_playing = False
         logger.info(f"Temporary directory created: {self.temp_dir}")
 
     async def initialize_robot_connection(self):
@@ -52,39 +52,74 @@ class WebSocketAudioPlayer:
             logger.error(f"Failed to connect to robot: {e}")
             raise
 
-    async def play_base64_audio(self, audio_data_b64: str, audio_format: str = "wav"):
+    async def convert_and_play_audio(
+        self, audio_data_b64: str, audio_format: str = "mp3"
+    ):
         """
-        Decode base64 audio and play it on the robot
+        Convert MP3/WAV to robot-compatible format and play
 
         Args:
             audio_data_b64: Base64 encoded audio data
-            audio_format: Audio format (wav or mp3, default: wav)
+            audio_format: Audio format (mp3 or wav, default: mp3)
         """
+        if self.is_playing:
+            logger.warning("Audio is already playing, skipping this request")
+            return
+
+        self.is_playing = True
         try:
             # Decode base64 audio
-            logger.info("Decoding base64 audio data")
+            logger.info(f"Decoding base64 {audio_format} audio data")
             audio_bytes = base64.b64decode(audio_data_b64)
             logger.info(f"Decoded audio size: {len(audio_bytes)} bytes")
 
-            # Create temporary file
-            temp_filename = (
-                f"audio_{int(asyncio.get_event_loop().time())}.{audio_format}"
+            # Create temporary file for input
+            input_filename = (
+                f"input_{int(asyncio.get_event_loop().time())}.{audio_format}"
             )
-            temp_filepath = os.path.join(self.temp_dir, temp_filename)
+            input_filepath = os.path.join(self.temp_dir, input_filename)
 
             # Write audio to temporary file
-            with open(temp_filepath, "wb") as f:
+            with open(input_filepath, "wb") as f:
                 f.write(audio_bytes)
-            logger.info(f"Audio saved to temporary file: {temp_filepath}")
+            logger.info(f"Audio saved to temporary file: {input_filepath}")
+
+            # Convert to robot-compatible format (16kHz, 16-bit, mono WAV)
+            logger.info("Converting audio to robot-compatible format (16kHz mono WAV)")
+            try:
+                if audio_format.lower() == "mp3":
+                    audio = AudioSegment.from_mp3(input_filepath)
+                else:
+                    audio = AudioSegment.from_wav(input_filepath)
+
+                # Convert to 16kHz, mono, 16-bit
+                audio = audio.set_frame_rate(16000)
+                audio = audio.set_channels(1)
+                audio = audio.set_sample_width(2)  # 16-bit
+
+                # Export to WAV
+                output_filename = f"audio_{int(asyncio.get_event_loop().time())}.wav"
+                output_filepath = os.path.join(self.temp_dir, output_filename)
+
+                audio.export(
+                    output_filepath,
+                    format="wav",
+                    parameters=["-ar", "16000", "-ac", "1"],
+                )
+                logger.info(f"Converted audio saved to: {output_filepath}")
+
+            except Exception as e:
+                logger.error(f"Error converting audio: {e}")
+                raise
 
             # Upload and play audio
             logger.info("Uploading audio to robot...")
-            await self.audio_hub.upload_audio_file(temp_filepath)
+            await self.audio_hub.upload_audio_file(output_filepath)
             logger.info("Audio uploaded successfully")
 
-            # Wait for upload to complete
+            # Wait for upload to settle
             logger.info("Waiting for upload to settle...")
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1.0)
 
             # Get the UUID of the uploaded file
             logger.info("Fetching audio list from robot...")
@@ -96,7 +131,7 @@ class WebSocketAudioPlayer:
                 logger.info(f"Found {len(audio_list)} audio files on robot")
 
                 # Get the filename without extension
-                filename = os.path.splitext(temp_filename)[0]
+                filename = os.path.splitext(output_filename)[0]
                 logger.info(f"Looking for audio with name: {filename}")
 
                 # Find the uploaded audio
@@ -114,12 +149,12 @@ class WebSocketAudioPlayer:
                     response = await self.audio_hub.play_by_uuid(uuid)
                     logger.info(f"Playback command sent, response: {response}")
 
-                    # Wait a moment to ensure playback starts
-                    await asyncio.sleep(0.3)
-                    logger.info("Audio playback command completed")
+                    # Wait for playback to start
+                    await asyncio.sleep(0.5)
+                    logger.info("Audio playback started")
 
-                    # Note: The robot may take a moment to start playing
-                    # You can subscribe to rt/audiohub/player/state to monitor playback status
+                    # Note: Check robot volume in Unitree app if no sound is heard
+                    # Settings → Volume should be >= 50%
                 else:
                     error_msg = f"Could not find uploaded audio '{filename}' in list"
                     logger.error(error_msg)
@@ -132,98 +167,60 @@ class WebSocketAudioPlayer:
                 logger.error(error_msg)
                 raise Exception(error_msg)
 
-            # Cleanup temporary file
+            # Cleanup temporary files
             try:
-                os.remove(temp_filepath)
-                logger.info(f"Temporary file removed: {temp_filepath}")
+                os.remove(input_filepath)
+                os.remove(output_filepath)
+                logger.info("Temporary files cleaned up")
             except Exception as e:
-                logger.warning(f"Failed to remove temporary file: {e}")
+                logger.warning(f"Failed to remove temporary files: {e}")
 
         except Exception as e:
             logger.error(f"Error playing audio: {e}")
             raise
+        finally:
+            self.is_playing = False
 
-    async def handle_websocket_connection(self, websocket):
-        """Handle incoming WebSocket connections"""
-        client_addr = websocket.remote_address
-        logger.info(f"New WebSocket connection from {client_addr}")
+    async def connect_and_listen(self):
+        """Connect to WebSocket server and listen for audio data"""
+        logger.info(f"Connecting to WebSocket server: {self.websocket_url}")
 
         try:
-            async for message in websocket:
-                try:
-                    # Parse JSON message
-                    data = json.loads(message)
+            async with websockets.connect(self.websocket_url) as websocket:
+                logger.info("Connected to WebSocket server")
+                logger.info("Waiting for audio data...")
 
-                    # Extract audio data and format
-                    audio_b64 = data.get("audio")
-                    audio_format = data.get("format", "wav")
+                async for message in websocket:
+                    try:
+                        # Parse JSON message
+                        data = json.loads(message)
 
-                    if not audio_b64:
-                        error_msg = "Missing 'audio' field in message"
-                        logger.error(error_msg)
-                        await websocket.send(
-                            json.dumps({"status": "error", "message": error_msg})
-                        )
-                        continue
+                        # Extract audio data and format
+                        audio_b64 = data.get("audio")
+                        audio_format = data.get("format", "mp3")
 
-                    logger.info(f"Received audio data (format: {audio_format})")
+                        if not audio_b64:
+                            error_msg = "Missing 'audio' field in message"
+                            logger.error(error_msg)
+                            continue
 
-                    # Send acknowledgment
-                    await websocket.send(
-                        json.dumps(
-                            {
-                                "status": "received",
-                                "message": "Audio data received, processing...",
-                            }
-                        )
-                    )
+                        logger.info(f"Received audio data (format: {audio_format})")
 
-                    # Play the audio
-                    await self.play_base64_audio(audio_b64, audio_format)
+                        # Convert and play the audio
+                        await self.convert_and_play_audio(audio_b64, audio_format)
 
-                    # Send success response
-                    await websocket.send(
-                        json.dumps(
-                            {
-                                "status": "success",
-                                "message": "Audio played successfully",
-                            }
-                        )
-                    )
+                        logger.info("Audio playback completed")
 
-                except json.JSONDecodeError as e:
-                    error_msg = f"Invalid JSON: {e}"
-                    logger.error(error_msg)
-                    await websocket.send(
-                        json.dumps({"status": "error", "message": error_msg})
-                    )
-                except Exception as e:
-                    error_msg = f"Error processing audio: {e}"
-                    logger.error(error_msg)
-                    await websocket.send(
-                        json.dumps({"status": "error", "message": error_msg})
-                    )
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Invalid JSON: {e}")
+                    except Exception as e:
+                        logger.error(f"Error processing audio: {e}")
 
+        except websockets.exceptions.ConnectionClosed:
+            logger.warning("WebSocket connection closed")
         except Exception as e:
             logger.error(f"WebSocket error: {e}")
-        finally:
-            logger.info(f"WebSocket connection closed: {client_addr}")
-
-    async def start_server(self):
-        """Start the WebSocket server"""
-        logger.info(f"Starting WebSocket server on {self.ws_host}:{self.ws_port}")
-
-        async with websockets.serve(
-            self.handle_websocket_connection, self.ws_host, self.ws_port
-        ):
-            logger.info(
-                f"WebSocket server running on ws://{self.ws_host}:{self.ws_port}"
-            )
-            logger.info("Waiting for connections...")
-            logger.info(
-                'Expected message format: {"audio": "<base64_encoded_audio>", "format": "wav"}'
-            )
-            await asyncio.Future()  # Run forever
+            raise
 
     async def run(self):
         """Main entry point"""
@@ -231,13 +228,13 @@ class WebSocketAudioPlayer:
             # Initialize robot connection
             await self.initialize_robot_connection()
 
-            # Start WebSocket server
-            await self.start_server()
+            # Connect to WebSocket server and listen
+            await self.connect_and_listen()
 
         except KeyboardInterrupt:
-            logger.info("Server stopped by user")
+            logger.info("Stopped by user")
         except Exception as e:
-            logger.error(f"Server error: {e}")
+            logger.error(f"Error: {e}")
         finally:
             # Cleanup
             try:
@@ -251,21 +248,21 @@ class WebSocketAudioPlayer:
 
 async def main():
     # Configuration - can be overridden via command line arguments
-    ROBOT_IP = "192.168.123.161"  # Default robot IP
-    WS_HOST = "0.0.0.0"  # Listen on all interfaces
-    WS_PORT = 8765  # WebSocket port
+    if len(sys.argv) < 3:
+        print("Usage: python websocket_audio_receiver.py <robot_ip> <websocket_url>")
+        print(
+            "Example: python websocket_audio_receiver.py 192.168.123.161 ws://server:8765"
+        )
+        sys.exit(1)
 
-    # Parse command line arguments
-    if len(sys.argv) > 1:
-        ROBOT_IP = sys.argv[1]
-    if len(sys.argv) > 2:
-        WS_PORT = int(sys.argv[2])
+    ROBOT_IP = sys.argv[1]
+    WEBSOCKET_URL = sys.argv[2]
 
-    logger.info(f"Configuration: Robot IP={ROBOT_IP}, WebSocket Port={WS_PORT}")
+    logger.info(f"Configuration: Robot IP={ROBOT_IP}, WebSocket URL={WEBSOCKET_URL}")
 
-    # Create and run the player
-    player = WebSocketAudioPlayer(ROBOT_IP, WS_HOST, WS_PORT)
-    await player.run()
+    # Create and run the streamer
+    streamer = WebSocketAudioStreamer(ROBOT_IP, WEBSOCKET_URL)
+    await streamer.run()
 
 
 if __name__ == "__main__":

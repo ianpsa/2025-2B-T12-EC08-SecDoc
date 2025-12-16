@@ -5,6 +5,7 @@ av==16.0.1
 cryptography==46.0.3
 pyOpenSSL==25.3.0
 pycryptodome==3.23.0
+pydub>=0.25.1
 
 # Install the unitree_webrtc_connect package from the parent go2_webrtc directory
 # Run: pip install -e ../../../go2_webrtc
