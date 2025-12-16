@@ -50,17 +50,17 @@ async fn handle_connection(
                         if let Err(e) = audio_sender.send(audio_data).await {
                             eprintln!("Failed to send audio data to pipeline: {}", e);
                             // Send error message back to client
-                            let _ = write.send(Message::Text(format!("ERROR: Failed to process audio: {}", e))).await;
+                            let _ = write.send(Message::Text(format!("ERROR: Failed to process audio: {}", e).into())).await;
                             break;
                         }
                         
                         // Send acknowledgment
-                        let _ = write.send(Message::Text("OK: Audio received".to_string())).await;
+                        let _ = write.send(Message::Text("OK: Audio received".to_string().into())).await;
                     }
                     Err(e) => {
                         eprintln!("Failed to decode base64: {}", e);
                         // Send error but don't close connection
-                        let _ = write.send(Message::Text(format!("ERROR: Invalid base64: {}", e))).await;
+                        let _ = write.send(Message::Text(format!("ERROR: Invalid base64: {}", e).into())).await;
                     }
                 }
             }
@@ -70,12 +70,12 @@ async fn handle_connection(
                 // Send raw binary data to processing pipeline
                 if let Err(e) = audio_sender.send(data.to_vec()).await {
                     eprintln!("Failed to send audio data to pipeline: {}", e);
-                    let _ = write.send(Message::Text(format!("ERROR: Failed to process audio: {}", e))).await;
+                    let _ = write.send(Message::Text(format!("ERROR: Failed to process audio: {}", e).into())).await;
                     break;
                 }
                 
                 // Send acknowledgment
-                let _ = write.send(Message::Text("OK: Audio received".to_string())).await;
+                let _ = write.send(Message::Text("OK: Audio received".to_string().into())).await;
             }
             Ok(Message::Close(_)) => {
                 println!("WebSocket connection closed by client");
