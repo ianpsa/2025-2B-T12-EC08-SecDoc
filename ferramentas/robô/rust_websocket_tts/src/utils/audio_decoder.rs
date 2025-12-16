@@ -60,33 +60,68 @@ pub fn decode_to_pcm(audio_data: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::error:
         "wav"
     } else if audio_data.len() >= 4 && &audio_data[0..4] == b"OggS" {
         "ogg"
-    } else if audio_data[0] == 0xFF && (audio_data[1] & 0xE0) == 0xE0 {
+    } else if audio_data.len() >= 2 && audio_data[0] == 0xFF && (audio_data[1] & 0xE0) == 0xE0 {
         "mp3"
     } else {
         "audio" // Generic
     };
     
+    println!("Detected format: {} (first 4 bytes: {:02X?})", extension, &audio_data[..4.min(audio_data.len())]);
+    
     // Write audio data to a temporary file since ffmpeg-next requires a file path
-    let temp_path = format!("/tmp/audio_{}.{}", std::process::id(), extension);
-    let mut file = std::fs::File::create(&temp_path)?;
-    file.write_all(&audio_data)?;
+    let temp_path = format!("/tmp/audio_{}_{}.{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(), extension);
+    println!("Writing {} bytes to temporary file: {}", audio_data.len(), temp_path);
+    
+    let mut file = std::fs::File::create(&temp_path)
+        .map_err(|e| format!("Failed to create temp file: {}", e))?;
+    file.write_all(&audio_data)
+        .map_err(|e| format!("Failed to write audio data: {}", e))?;
     drop(file); // Ensure file is closed
     
     // Create input context from file
-    let mut input = format::input(&temp_path)?;
+    println!("Opening audio file with ffmpeg...");
+    let mut input = format::input(&temp_path)
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&temp_path);
+            format!("Failed to open audio file with ffmpeg: {}", e)
+        })?;
     
     // Find audio stream
+    println!("Looking for audio stream...");
     let input_stream = input
         .streams()
         .best(media::Type::Audio)
-        .ok_or("No audio stream found")?;
+        .ok_or_else(|| {
+            let _ = std::fs::remove_file(&temp_path);
+            "No audio stream found in file".to_string()
+        })?;
     let stream_index = input_stream.index();
     
+    println!("Found audio stream: index={}, codec={:?}, rate={}, channels={}", 
+        stream_index,
+        input_stream.parameters().id(),
+        input_stream.parameters().rate(),
+        input_stream.parameters().channels()
+    );
+    
     // Get decoder
-    let context_decoder = ffmpeg_next::codec::context::Context::from_parameters(input_stream.parameters())?;
-    let mut decoder = context_decoder.decoder().audio()?;
+    let context_decoder = ffmpeg_next::codec::context::Context::from_parameters(input_stream.parameters())
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&temp_path);
+            format!("Failed to create decoder context: {}", e)
+        })?;
+    let mut decoder = context_decoder.decoder().audio()
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&temp_path);
+            format!("Failed to create audio decoder: {}", e)
+        })?;
+    
+    println!("Decoder initialized: format={:?}, rate={}, channels={}", 
+        decoder.format(), decoder.rate(), decoder.channels()
+    );
     
     // Setup resampler to PCM 16-bit
+    println!("Setting up resampler...");
     let mut resampler = resampling::Context::get(
         decoder.format(),
         decoder.channel_layout(),
@@ -94,19 +129,32 @@ pub fn decode_to_pcm(audio_data: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::error:
         format::Sample::I16(format::sample::Type::Packed),
         decoder.channel_layout(),
         decoder.rate(),
-    )?;
+    ).map_err(|e| {
+        let _ = std::fs::remove_file(&temp_path);
+        format!("Failed to create resampler: {}", e)
+    })?;
     
     let mut pcm_output = Vec::new();
+    let mut packet_count = 0;
     
+    println!("Starting decoding...");
     // Decode packets
     for (stream, packet) in input.packets() {
         if stream.index() == stream_index {
-            decoder.send_packet(&packet)?;
+            packet_count += 1;
+            if let Err(e) = decoder.send_packet(&packet) {
+                eprintln!("Warning: Failed to send packet {}: {}", packet_count, e);
+                continue;
+            }
+            
             let mut decoded_frame = ffmpeg_next::util::frame::Audio::empty();
             
             while decoder.receive_frame(&mut decoded_frame).is_ok() {
                 let mut resampled = ffmpeg_next::util::frame::Audio::empty();
-                resampler.run(&decoded_frame, &mut resampled)?;
+                if let Err(e) = resampler.run(&decoded_frame, &mut resampled) {
+                    eprintln!("Warning: Failed to resample frame: {}", e);
+                    continue;
+                }
                 
                 // Convert samples to bytes
                 let data = resampled.data(0);
@@ -115,18 +163,31 @@ pub fn decode_to_pcm(audio_data: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::error:
         }
     }
     
+    println!("Processed {} packets", packet_count);
+    
     // Flush decoder
-    decoder.send_eof()?;
-    let mut decoded_frame = ffmpeg_next::util::frame::Audio::empty();
-    while decoder.receive_frame(&mut decoded_frame).is_ok() {
-        let mut resampled = ffmpeg_next::util::frame::Audio::empty();
-        resampler.run(&decoded_frame, &mut resampled)?;
-        let data = resampled.data(0);
-        pcm_output.extend_from_slice(data);
+    println!("Flushing decoder...");
+    if let Err(e) = decoder.send_eof() {
+        eprintln!("Warning: Failed to send EOF to decoder: {}", e);
+    } else {
+        let mut decoded_frame = ffmpeg_next::util::frame::Audio::empty();
+        while decoder.receive_frame(&mut decoded_frame).is_ok() {
+            let mut resampled = ffmpeg_next::util::frame::Audio::empty();
+            if resampler.run(&decoded_frame, &mut resampled).is_ok() {
+                let data = resampled.data(0);
+                pcm_output.extend_from_slice(data);
+            }
+        }
     }
     
     // Clean up temporary file
     let _ = std::fs::remove_file(&temp_path);
+    
+    println!("Decoding complete: {} bytes of PCM output", pcm_output.len());
+    
+    if pcm_output.is_empty() {
+        return Err("Decoding produced no audio data".into());
+    }
     
     Ok(pcm_output)
 }

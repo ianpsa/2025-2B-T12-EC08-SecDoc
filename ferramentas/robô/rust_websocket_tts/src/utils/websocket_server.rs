@@ -1,6 +1,6 @@
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
-use futures_util::StreamExt;
+use futures_util::{StreamExt, SinkExt};
 use tokio::sync::mpsc;
 
 pub async fn start_websocket_server(
@@ -21,43 +21,78 @@ pub async fn start_websocket_server(
 async fn handle_connection(
     stream: TcpStream,
     audio_sender: mpsc::Sender<Vec<u8>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let ws_stream = accept_async(stream).await?;
-    let (_write, mut read) = ws_stream.split();
+) {
+    // Remove Result return type to avoid propagating errors that close the connection
+    let ws_stream = match accept_async(stream).await {
+        Ok(ws) => ws,
+        Err(e) => {
+            eprintln!("Error during WebSocket handshake: {}", e);
+            return;
+        }
+    };
+    
+    let (mut write, mut read) = ws_stream.split();
     
     println!("New WebSocket connection established");
     
     while let Some(msg) = read.next().await {
-        match msg? {
-            Message::Text(text) => {
+        match msg {
+            Ok(Message::Text(text)) => {
                 println!("Received text message ({} chars)", text.len());
-                // Decode base64 to MP3 bytes
+                
+                // Decode base64 to audio bytes
                 use base64::Engine;
-                let mp3_data = base64::engine::general_purpose::STANDARD.decode(text)?;
-                
-                println!("Decoded {} bytes from base64", mp3_data.len());
-                
-                // Send to processing pipeline
-                if audio_sender.send(mp3_data).await.is_err() {
-                    eprintln!("Failed to send audio data to pipeline");
-                    break;
+                match base64::engine::general_purpose::STANDARD.decode(&text) {
+                    Ok(audio_data) => {
+                        println!("Decoded {} bytes from base64", audio_data.len());
+                        
+                        // Send to processing pipeline
+                        if let Err(e) = audio_sender.send(audio_data).await {
+                            eprintln!("Failed to send audio data to pipeline: {}", e);
+                            // Send error message back to client
+                            let _ = write.send(Message::Text(format!("ERROR: Failed to process audio: {}", e))).await;
+                            break;
+                        }
+                        
+                        // Send acknowledgment
+                        let _ = write.send(Message::Text("OK: Audio received".to_string())).await;
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to decode base64: {}", e);
+                        // Send error but don't close connection
+                        let _ = write.send(Message::Text(format!("ERROR: Invalid base64: {}", e))).await;
+                    }
                 }
             }
-            Message::Binary(data) => {
+            Ok(Message::Binary(data)) => {
                 println!("Received binary message ({} bytes)", data.len());
-                // If binary data is sent directly
-                if audio_sender.send(data.to_vec()).await.is_err() {
-                    eprintln!("Failed to send audio data to pipeline");
+                
+                // Send raw binary data to processing pipeline
+                if let Err(e) = audio_sender.send(data.to_vec()).await {
+                    eprintln!("Failed to send audio data to pipeline: {}", e);
+                    let _ = write.send(Message::Text(format!("ERROR: Failed to process audio: {}", e))).await;
                     break;
                 }
+                
+                // Send acknowledgment
+                let _ = write.send(Message::Text("OK: Audio received".to_string())).await;
             }
-            Message::Close(_) => {
-                println!("WebSocket connection closed");
+            Ok(Message::Close(_)) => {
+                println!("WebSocket connection closed by client");
                 break;
             }
-            _ => {}
+            Ok(Message::Ping(payload)) => {
+                let _ = write.send(Message::Pong(payload)).await;
+            }
+            Ok(_) => {
+                // Ignore other message types
+            }
+            Err(e) => {
+                eprintln!("WebSocket error: {}", e);
+                break;
+            }
         }
     }
     
-    Ok(())
+    println!("Connection handler terminated");
 }
