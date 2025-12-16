@@ -15,11 +15,15 @@ pub struct WebRTCAudioPlayer {
 impl WebRTCAudioPlayer {
     /// Create a new audio player with an audio track
     pub fn new(audio_receiver: mpsc::Receiver<Vec<u8>>) -> Self {
-        // Create audio track (48kHz stereo PCM like in Python examples)
+        // Create audio track with Opus codec (standard for WebRTC audio)
+        // Opus parameters: 48kHz clock rate, 2 channels (stereo)
         let audio_track = Arc::new(TrackLocalStaticSample::new(
             webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability {
                 mime_type: "audio/opus".to_owned(),
-                ..Default::default()
+                clock_rate: 48000,  // Opus uses 48kHz clock rate
+                channels: 2,        // Stereo
+                sdp_fmtp_line: "".to_owned(),
+                rtcp_feedback: vec![],
             },
             "audio".to_owned(),
             "webrtc-audio-player".to_owned(),

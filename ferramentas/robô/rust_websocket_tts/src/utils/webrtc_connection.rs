@@ -72,8 +72,14 @@ impl UnitreeWebRTCConnection {
     pub async fn setup(&self) -> Result<()> {
         println!("[WEBRTC] Setting up peer connection...");
 
-        // Create a MediaEngine
+        // Create a MediaEngine and register audio codecs
         let mut media_engine = MediaEngine::default();
+        
+        // Register Opus codec (required for audio)
+        // Opus is the standard audio codec for WebRTC
+        media_engine.register_default_codecs()?;
+        
+        println!("[WEBRTC] Registered audio codecs (Opus, PCMU, PCMA)");
         
         // Create an InterceptorRegistry
         let registry = Registry::new();
