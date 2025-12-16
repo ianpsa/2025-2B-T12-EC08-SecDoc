@@ -20,14 +20,24 @@ from unitree_webrtc_connect.webrtc_audiohub import WebRTCAudioHub
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- CONFIGURATION ---
-# Set to True if your robot DOES NOT auto-play uploaded files.
-# Set to False if your robot plays automatically (prevents double play).
-SEND_PLAY_COMMAND = False  
+# ==================================================================================
+# ⚙️ CONFIGURATION
+# ==================================================================================
 
-# Time to ignore duplicate files (in seconds)
+# ✅ SET THIS TO TRUE (Since it stopped playing, we know we need this!)
+SEND_PLAY_COMMAND = True  
+
+# Ignore duplicate audio messages received within this many seconds
 IGNORE_DUPLICATES_SECONDS = 30.0 
-# ---------------------
+
+# ==================================================================================
+
+def check_ffmpeg():
+    """Check if ffmpeg is installed"""
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        logger.error("❌ FFMPEG NOT FOUND. Please install it (sudo apt install ffmpeg)")
+        return False
+    return True
 
 class WebSocketAudioStreamer:
     def __init__(self, robot_ip: str, websocket_url: str, retry_interval: float = 5.0):
@@ -40,15 +50,13 @@ class WebSocketAudioStreamer:
         self.should_stop = False
         
         self.audio_queue = asyncio.Queue()
-        
-        # LOCK: Ensures we never ask the WebRTC lib to upload two things at once
         self.upload_lock = asyncio.Lock()
         
-        # State for deduplication
-        self.last_hash = None
-        self.last_time = 0
+        # State to prevent loops/duplicates
+        self.last_played_hash = None
+        self.last_played_time = 0
         
-        logger.info(f"Temp dir: {self.temp_dir}")
+        logger.info(f"Temporary directory created: {self.temp_dir}")
 
     async def initialize_robot_connection(self):
         logger.info(f"Connecting to robot at {self.robot_ip}")
@@ -56,130 +64,144 @@ class WebSocketAudioStreamer:
             WebRTCConnectionMethod.LocalSTA, ip=self.robot_ip
         )
         await self.webrtc_conn.connect()
-        logger.info("✅ WebRTC Connected")
+        logger.info("✅ WebRTC connection established")
         self.audio_hub = WebRTCAudioHub(self.webrtc_conn, logger)
 
     async def process_audio_queue(self):
-        logger.info("🎶 Worker started")
+        """Worker that processes audio one by one"""
+        logger.info("🎶 Audio processing worker started")
         while not self.should_stop:
             try:
-                # Get next item
-                audio_b64, audio_fmt = await self.audio_queue.get()
+                audio_data_b64, audio_format = await self.audio_queue.get()
                 
-                # Check Hash (Deduplication)
-                current_hash = hashlib.md5(audio_b64.encode()).hexdigest()
-                now = time.time()
+                # --- DEDUPLICATION CHECK ---
+                audio_hash = hashlib.md5(audio_data_b64.encode()).hexdigest()
+                current_time = time.time()
                 
-                if (current_hash == self.last_hash and 
-                    (now - self.last_time) < IGNORE_DUPLICATES_SECONDS):
-                    logger.warning("⚠️ Duplicate ignored (already played recently)")
+                if (audio_hash == self.last_played_hash and 
+                    (current_time - self.last_played_time) < IGNORE_DUPLICATES_SECONDS):
+                    logger.warning("⚠️  Duplicate received (ignoring)")
                     self.audio_queue.task_done()
                     continue
 
-                # It is a valid new file
-                self.last_hash = current_hash
-                self.last_time = now
+                self.last_played_hash = audio_hash
+                self.last_played_time = current_time
                 
-                # Use the Lock to prevent overlapping WebRTC calls
+                # Use lock to ensure strictly sequential processing
                 async with self.upload_lock:
-                    await self.convert_and_play(audio_b64, audio_fmt)
+                    await self.convert_and_play_audio(audio_data_b64, audio_format)
                 
                 self.audio_queue.task_done()
                 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Worker Error: {e}")
+                logger.error(f"Worker error: {e}")
 
-    async def convert_and_play(self, audio_b64, fmt):
+    async def convert_and_play_audio(self, audio_data_b64: str, audio_format: str):
         try:
-            # Decode
-            raw = base64.b64decode(audio_b64)
-            ts = int(time.time() * 1000)
-            in_path = os.path.join(self.temp_dir, f"in_{ts}.{fmt}")
-            out_path = os.path.join(self.temp_dir, f"out_{ts}.wav")
-
-            with open(in_path, "wb") as f:
-                f.write(raw)
+            audio_bytes = base64.b64decode(audio_data_b64)
+            timestamp = int(time.time() * 1000)
             
-            # Convert
+            # File Paths
+            input_path = os.path.join(self.temp_dir, f"in_{timestamp}.{audio_format}")
+            output_path = os.path.join(self.temp_dir, f"out_{timestamp}.wav")
+
+            # Write Input
+            with open(input_path, "wb") as f:
+                f.write(audio_bytes)
+            
+            # Convert to WAV (16kHz, Mono)
             try:
-                audio = AudioSegment.from_file(in_path, format=fmt)
+                audio = AudioSegment.from_file(input_path, format=audio_format)
                 audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
-                audio.export(out_path, format="wav")
+                audio.export(output_path, format="wav")
             except Exception as e:
-                logger.error(f"Convert failed: {e}")
+                logger.error(f"❌ Conversion failed: {e}")
                 return
 
-            # --- WEBRTC UPLOAD SECTION ---
-            logger.info(f"📤 Uploading {len(raw)} bytes...")
+            # Upload
+            logger.info(f"📤 Uploading {len(audio_bytes)} bytes to robot...")
+            await self.audio_hub.upload_audio_file(output_path)
             
-            # 1. Upload
-            await self.audio_hub.upload_audio_file(out_path)
-            
-            # 2. Wait strictly to let the WebRTC channel clear
-            await asyncio.sleep(1.0) 
+            # Wait for filesystem to settle
+            await asyncio.sleep(1.0)
 
-            # 3. Only send play command if configured
+            # Explicit Play Command
             if SEND_PLAY_COMMAND:
-                logger.info("▶️ Sending manual PLAY command...")
-                resp = await self.audio_hub.get_audio_list()
-                if resp:
-                    # Parse messy JSON inside JSON
-                    inner = json.loads(resp.get("data", {}).get("data", "{}"))
-                    lst = inner.get("audio_list", [])
-                    
-                    target = os.path.splitext(os.path.basename(out_path))[0]
-                    found = next((x for x in lst if x["CUSTOM_NAME"] == target), None)
-                    
-                    if found:
-                        await self.audio_hub.play_by_uuid(found["UNIQUE_ID"])
-            else:
-                logger.info("✅ Upload done (Auto-play assumed)")
-
+                logger.info("🔍 Searching for file on robot...")
+                response = await self.audio_hub.get_audio_list()
+                
+                if response:
+                    # Parse the nested JSON response
+                    try:
+                        if isinstance(response, str):
+                            data_obj = json.loads(response)
+                        else:
+                            data_obj = response
+                            
+                        inner_data = data_obj.get("data", {})
+                        if isinstance(inner_data, str):
+                            inner_data = json.loads(inner_data) # sometimes it's double encoded
+                            
+                        audio_list = inner_data.get("audio_list", [])
+                        
+                        # Find our file
+                        target_name = os.path.splitext(os.path.basename(output_path))[0]
+                        
+                        match = next((a for a in audio_list if a["CUSTOM_NAME"] == target_name), None)
+                        if match:
+                            uuid = match["UNIQUE_ID"]
+                            logger.info(f"▶️  PLAYING (UUID: {uuid})")
+                            await self.audio_hub.play_by_uuid(uuid)
+                        else:
+                            logger.warning(f"⚠️ Could not find '{target_name}' in robot list")
+                    except Exception as json_err:
+                        logger.error(f"❌ Error parsing robot audio list: {json_err}")
+            
             # Cleanup
-            if os.path.exists(in_path): os.remove(in_path)
-            if os.path.exists(out_path): os.remove(out_path)
+            await asyncio.sleep(1.0)
+            if os.path.exists(input_path): os.remove(input_path)
+            if os.path.exists(output_path): os.remove(output_path)
 
         except Exception as e:
-            logger.error(f"Processing error: {e}")
+            logger.error(f"Playback sequence error: {e}")
 
     async def connect_and_listen(self):
         while not self.should_stop:
             try:
-                logger.info(f"Connecting to Server {self.websocket_url}...")
-                async with websockets.connect(self.websocket_url) as ws:
-                    logger.info("✅ Connected")
-                    async for msg in ws:
-                        data = json.loads(msg)
-                        if "audio" in data:
-                            # Just put in queue, let the locked worker handle it
-                            await self.audio_queue.put((data["audio"], data.get("format", "mp3")))
-            except Exception as e:
-                logger.warning(f"Connection error: {e}")
+                logger.info(f"Connecting to {self.websocket_url}...")
+                async with websockets.connect(self.websocket_url) as websocket:
+                    logger.info("✅ Connected to Server")
+                    
+                    async for message in websocket:
+                        try:
+                            data = json.loads(message)
+                            if "audio" in data:
+                                await self.audio_queue.put((data["audio"], data.get("format", "mp3")))
+                        except Exception:
+                            pass
+            except Exception:
+                logger.warning(f"Connection lost. Retrying in {self.retry_interval}s...")
                 await asyncio.sleep(self.retry_interval)
 
     async def run(self):
-        # Check ffmpeg first
-        if not shutil.which("ffmpeg"):
-            logger.error("❌ FFmpeg missing!")
-            return
-
-        await self.initialize_robot_connection()
-        
-        # Start the Locked Worker
-        task = asyncio.create_task(self.process_audio_queue())
-        
-        await self.connect_and_listen()
-        task.cancel()
+        try:
+            check_ffmpeg()
+            await self.initialize_robot_connection()
+            worker = asyncio.create_task(self.process_audio_queue())
+            await self.connect_and_listen()
+            worker.cancel()
+        except KeyboardInterrupt:
+            logger.info("Stopping...")
+        finally:
+            shutil.rmtree(self.temp_dir, ignore_errors=True)
 
 async def main():
     if len(sys.argv) < 3:
-        print("Usage: python receiver.py <ROBOT_IP> <WS_URL>")
+        print("Usage: python receiver.py <robot_ip> <websocket_url>")
         sys.exit(1)
-    
-    streamer = WebSocketAudioStreamer(sys.argv[1], sys.argv[2])
-    await streamer.run()
+    await WebSocketAudioStreamer(sys.argv[1], sys.argv[2]).run()
 
 if __name__ == "__main__":
     asyncio.run(main())
