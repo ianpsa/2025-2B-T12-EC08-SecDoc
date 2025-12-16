@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::error::Error;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use crate::utils::webrtc_connection::UnitreeWebRTCConnection;
 
 // Audio API IDs matching Python implementation
@@ -46,18 +47,32 @@ pub struct AudioFileInfo {
 /// Handles audio upload and playback via WebRTC data channel
 pub struct WebRTCAudioHub {
     connection: Arc<UnitreeWebRTCConnection>,
+    is_connected: Arc<Mutex<bool>>,
 }
 
 impl WebRTCAudioHub {
     pub fn new(robot_ip: String) -> Self {
         Self {
             connection: Arc::new(UnitreeWebRTCConnection::new(robot_ip)),
+            is_connected: Arc::new(Mutex::new(false)),
         }
     }
 
-    /// Initialize the WebRTC connection to the robot
+    /// Initialize the WebRTC connection to the robot (called lazily on first use)
     pub async fn connect(&self) -> Result<(), anyhow::Error> {
         self.connection.connect().await
+    }
+
+    /// Ensure connection is established before use
+    async fn ensure_connected(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let mut connected = self.is_connected.lock().await;
+        if !*connected {
+            println!("[WEBRTC] Establishing connection to robot (first use)...");
+            self.connection.connect().await?;
+            *connected = true;
+            println!("[WEBRTC] ✓ Connection established");
+        }
+        Ok(())
     }
 
     /// Upload WAV audio file in chunks via WebRTC data channel
@@ -67,6 +82,9 @@ impl WebRTCAudioHub {
         file_name: &str,
         wav_data: Vec<u8>,
     ) -> Result<String, Box<dyn Error + Send + Sync>> {
+        // Ensure connection is established
+        self.ensure_connected().await?;
+        
         println!("[WEBRTC] Preparing to upload audio file: {}", file_name);
         println!("[WEBRTC] Audio size: {} bytes", wav_data.len());
 
@@ -135,6 +153,9 @@ impl WebRTCAudioHub {
 
     /// Get list of audio files available on the robot
     pub async fn get_audio_list(&self) -> Result<AudioListResponse, Box<dyn Error + Send + Sync>> {
+        // Ensure connection is established
+        self.ensure_connected().await?;
+        
         println!("[WEBRTC] Fetching audio list from robot...");
         
         let request_data = json!({
@@ -156,6 +177,9 @@ impl WebRTCAudioHub {
 
     /// Play audio by UUID
     pub async fn play_by_uuid(&self, uuid: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+        // Ensure connection is established
+        self.ensure_connected().await?;
+        
         println!("[WEBRTC] Playing audio with UUID: {}", uuid);
         
         let param = PlayByUuidParameter {

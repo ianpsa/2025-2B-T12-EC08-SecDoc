@@ -7,15 +7,22 @@ pub async fn start_websocket_server(
     addr: &str,
     audio_sender: mpsc::Sender<Vec<u8>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    println!("[WEBSOCKET] Binding to address: {}", addr);
     let listener = TcpListener::bind(addr).await?;
-    println!("WebSocket server listening on: {}", addr);
+    println!("[WEBSOCKET] WebSocket server listening on: {}", addr);
     
-    while let Ok((stream, _)) = listener.accept().await {
-        let sender = audio_sender.clone();
-        tokio::spawn(handle_connection(stream, sender));
+    loop {
+        match listener.accept().await {
+            Ok((stream, addr)) => {
+                println!("[WEBSOCKET] New connection from: {}", addr);
+                let sender = audio_sender.clone();
+                tokio::spawn(handle_connection(stream, sender));
+            }
+            Err(e) => {
+                eprintln!("[WEBSOCKET] Accept error: {}", e);
+            }
+        }
     }
-    
-    Ok(())
 }
 
 async fn handle_connection(
