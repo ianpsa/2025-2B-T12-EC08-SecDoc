@@ -14,12 +14,13 @@ from unitree_webrtc_connect.webrtc_driver import (
 )
 from unitree_webrtc_connect.webrtc_audiohub import WebRTCAudioHub
 
+# Standardize logging format
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
 SEND_PLAY_COMMAND = True  
-STREAM_CHUNKS = True      # Wait for audio to finish before next chunk (Smooth Streaming)
+STREAM_CHUNKS = True      
 # ---------------------
 
 class WebSocketAudioStreamer:
@@ -31,7 +32,7 @@ class WebSocketAudioStreamer:
         self.audio_hub = None
         self.temp_dir = tempfile.mkdtemp()
         
-        # Initialize these as None. They must be created inside run()
+        # Will be initialized in run()
         self.audio_queue = None
         self.upload_lock = None
         
@@ -47,35 +48,48 @@ class WebSocketAudioStreamer:
         logger.info("✅ WebRTC Connected")
         self.audio_hub = WebRTCAudioHub(self.webrtc_conn, logger)
 
-    async def find_uuid_fast(self, target_name_base, retries=10):
-        """Fast polling to find the file UUID."""
-        for _ in range(retries):
+    async def find_uuid_robust(self, target_name_base, retries=20):
+        """
+        Polls the robot list to find the file UUID.
+        Waits up to 6-10 seconds (retries * 0.3s + overhead).
+        """
+        last_audio_list_names = []
+        
+        for attempt in range(retries):
             try:
                 response = await self.audio_hub.get_audio_list()
                 if response:
+                    # Parse nested JSON
                     data = response if isinstance(response, dict) else json.loads(response)
                     inner = data.get("data", {})
                     if isinstance(inner, str): inner = json.loads(inner)
                     
                     audio_list = inner.get("audio_list", [])
+                    last_audio_list_names = [a["CUSTOM_NAME"] for a in audio_list]
                     
+                    # Fuzzy match: check if our 'chk_X' is inside the robot's filename
                     for audio in audio_list:
                         if target_name_base in audio["CUSTOM_NAME"]:
                             return audio["UNIQUE_ID"]
             except Exception:
                 pass
-            await asyncio.sleep(0.2)
+            
+            # Wait a bit before retrying
+            await asyncio.sleep(0.3)
+            
+        # If we exit loop, we failed. Log what we actually saw to help debug.
+        logger.warning(f"❌ Failed to find '{target_name_base}'. Robot has these files: {last_audio_list_names}")
         return None
 
     async def process_audio_queue(self):
         logger.info("🎶 Streamer Worker Started")
         while True:
             try:
-                # 1. Get next chunk
                 if self.audio_queue is None:
                     await asyncio.sleep(0.1)
                     continue
 
+                # 1. Get next chunk
                 audio_b64, audio_fmt = await self.audio_queue.get()
                 
                 # 2. Lock prevents simultaneous uploads
@@ -85,7 +99,6 @@ class WebSocketAudioStreamer:
                 self.audio_queue.task_done()
             except Exception as e:
                 logger.error(f"Loop error: {e}")
-                # Prevent tight loop crash
                 await asyncio.sleep(1.0)
 
     async def handle_chunk(self, audio_b64, fmt):
@@ -96,9 +109,11 @@ class WebSocketAudioStreamer:
             in_path = os.path.join(self.temp_dir, f"{base_name}.{fmt}")
             out_path = os.path.join(self.temp_dir, f"{base_name}.wav")
 
+            # Decode
             with open(in_path, "wb") as f:
                 f.write(base64.b64decode(audio_b64))
             
+            # Convert
             duration_sec = 0
             try:
                 audio = AudioSegment.from_file(in_path, format=fmt)
@@ -110,21 +125,25 @@ class WebSocketAudioStreamer:
                 logger.error("Convert failed")
                 return
 
+            # Upload
+            # logger.info(f"📤 Uploading {base_name}...")
             await self.audio_hub.upload_audio_file(out_path)
             
             if SEND_PLAY_COMMAND:
-                uuid = await self.find_uuid_fast(base_name)
+                # Wait longer for robot to index
+                uuid = await self.find_uuid_robust(base_name)
                 
                 if uuid:
                     logger.info(f"▶️  Playing {base_name} ({duration_sec:.1f}s)")
                     await self.audio_hub.play_by_uuid(uuid)
                     
                     if STREAM_CHUNKS and duration_sec > 0:
-                        # Wait for audio to finish (minus small buffer)
+                        # Wait for audio to finish so chunks play in order
                         await asyncio.sleep(max(0, duration_sec - 0.2))
                 else:
-                    logger.warning(f"⚠️ Skipped {base_name} (Not found)")
+                    logger.warning(f"⚠️ SKIPPED {base_name} (Timed out)")
 
+            # Cleanup
             if os.path.exists(in_path): os.remove(in_path)
             if os.path.exists(out_path): os.remove(out_path)
 
@@ -136,10 +155,9 @@ class WebSocketAudioStreamer:
             logger.error("❌ FFmpeg required")
             return
 
-        # --- FIX: Initialize Queue/Lock HERE, inside the running loop ---
+        # Initialize async objects INSIDE the loop
         self.audio_queue = asyncio.Queue()
         self.upload_lock = asyncio.Lock()
-        # ----------------------------------------------------------------
 
         await self.initialize_robot_connection()
         asyncio.create_task(self.process_audio_queue())
