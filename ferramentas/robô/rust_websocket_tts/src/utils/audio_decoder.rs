@@ -97,11 +97,9 @@ pub fn decode_to_pcm(audio_data: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::error:
         })?;
     let stream_index = input_stream.index();
     
-    println!("Found audio stream: index={}, codec={:?}, rate={}, channels={}", 
+    println!("Found audio stream: index={}, codec={:?}", 
         stream_index,
-        input_stream.parameters().id(),
-        input_stream.rate(),
-        input_stream.channels()
+        input_stream.parameters().id()
     );
     
     // Get decoder
