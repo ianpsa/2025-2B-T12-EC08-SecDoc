@@ -38,6 +38,8 @@ pub struct UnitreeWebRTCConnection {
     peer_connection: Arc<Mutex<Option<Arc<RTCPeerConnection>>>>,
     data_channel: Arc<Mutex<Option<Arc<RTCDataChannel>>>>,
     response_handlers: Arc<RwLock<HashMap<String, mpsc::Sender<DataChannelResponse>>>>,
+    connection_ready: Arc<Mutex<bool>>,
+    ready_notifier: Arc<tokio::sync::Notify>,
 }
 
 impl UnitreeWebRTCConnection {
@@ -47,7 +49,33 @@ impl UnitreeWebRTCConnection {
             peer_connection: Arc::new(Mutex::new(None)),
             data_channel: Arc::new(Mutex::new(None)),
             response_handlers: Arc::new(RwLock::new(HashMap::new())),
+            connection_ready: Arc::new(Mutex::new(false)),
+            ready_notifier: Arc::new(tokio::sync::Notify::new()),
         }
+    }
+
+    /// Wait for the WebRTC connection to be fully established
+    pub async fn wait_until_connected(&self) -> Result<()> {
+        println!("[WEBRTC] Waiting for connection to be fully established...");
+        
+        // Wait with timeout (30 seconds)
+        let timeout = tokio::time::Duration::from_secs(30);
+        
+        tokio::time::timeout(timeout, async {
+            loop {
+                let ready = *self.connection_ready.lock().await;
+                if ready {
+                    break;
+                }
+                // Wait for notification
+                self.ready_notifier.notified().await;
+            }
+        })
+        .await
+        .map_err(|_| anyhow!("Timeout waiting for WebRTC connection"))?;
+        
+        println!("[WEBRTC] ✓ Connection fully established and ready");
+        Ok(())
     }
 
     /// Connect to the robot via WebRTC
@@ -108,10 +136,38 @@ impl UnitreeWebRTCConnection {
         // Store peer connection
         *self.peer_connection.lock().await = Some(peer_connection.clone());
 
-        // Set up connection state handler
+        // Set up connection state handler with ready notification
+        let connection_ready = self.connection_ready.clone();
+        let ready_notifier = self.ready_notifier.clone();
         peer_connection.on_peer_connection_state_change(Box::new(move |state: RTCPeerConnectionState| {
-            println!("[WEBRTC] Connection state changed: {:?}", state);
-            Box::pin(async move {})
+            let connection_ready = connection_ready.clone();
+            let ready_notifier = ready_notifier.clone();
+            Box::pin(async move {
+                match state {
+                    RTCPeerConnectionState::Connected => {
+                        println!("[WEBRTC] 🟢 Connection state: Connected");
+                        *connection_ready.lock().await = true;
+                        ready_notifier.notify_waiters();
+                    }
+                    RTCPeerConnectionState::Connecting => {
+                        println!("[WEBRTC] 🟡 Connection state: Connecting...");
+                    }
+                    RTCPeerConnectionState::Failed => {
+                        println!("[WEBRTC] 🔴 Connection state: Failed");
+                    }
+                    RTCPeerConnectionState::Disconnected => {
+                        println!("[WEBRTC] 🟠 Connection state: Disconnected");
+                        *connection_ready.lock().await = false;
+                    }
+                    RTCPeerConnectionState::Closed => {
+                        println!("[WEBRTC] ⚫ Connection state: Closed");
+                        *connection_ready.lock().await = false;
+                    }
+                    _ => {
+                        println!("[WEBRTC] Connection state changed: {:?}", state);
+                    }
+                }
+            })
         }));
 
         // Create data channel for audio hub communication (if needed)

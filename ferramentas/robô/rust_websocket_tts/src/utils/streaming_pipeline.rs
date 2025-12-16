@@ -46,18 +46,33 @@ pub async fn start_pipeline(
                         Ok(_) => {
                             println!("[PIPELINE] ✓ Audio track added");
                             
-                            // Step 4: Start audio playback task
-                            println!("[PIPELINE] Starting audio playback task...");
-                            audio_player.start_playback().await;
-                            println!("[PIPELINE] ✓ Audio player started");
-                            
-                            // Step 5: NOW establish WebRTC connection (creates offer with audio track)
+                            // Step 4: NOW establish WebRTC connection (creates offer with audio track)
                             println!("[PIPELINE] Establishing WebRTC connection (creating offer + signaling)...");
                             match webrtc_conn.connect().await {
                                 Ok(_) => {
-                                    println!("[PIPELINE] ✓ WebRTC connection established");
-                                    webrtc_initialized = true;
-                                    println!("[PIPELINE] *** WebRTC initialization complete! ***\n");
+                                    println!("[PIPELINE] ✓ Signaling complete");
+                                    
+                                    // Step 5: Wait for connection to be fully established
+                                    println!("[PIPELINE] Waiting for WebRTC connection to complete (ICE + DTLS handshake)...");
+                                    match webrtc_conn.wait_until_connected().await {
+                                        Ok(_) => {
+                                            println!("[PIPELINE] ✓ WebRTC connection fully established");
+                                            
+                                            // Step 6: NOW start audio playback (connection is ready)
+                                            println!("[PIPELINE] Starting audio playback task...");
+                                            audio_player.start_playback().await;
+                                            println!("[PIPELINE] ✓ Audio player started");
+                                            
+                                            webrtc_initialized = true;
+                                            println!("[PIPELINE] *** WebRTC initialization complete! ***\n");
+                                        }
+                                        Err(e) => {
+                                            eprintln!("[PIPELINE] ✗ Timeout waiting for connection: {}", e);
+                                            eprintln!("[PIPELINE] The signaling completed but ICE/DTLS handshake failed");
+                                            eprintln!("[PIPELINE] Will retry on next audio message...");
+                                            continue;
+                                        }
+                                    }
                                 }
                                 Err(e) => {
                                     eprintln!("[PIPELINE] ✗ Failed to establish WebRTC connection: {}", e);
