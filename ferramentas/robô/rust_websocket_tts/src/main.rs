@@ -18,6 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Configuration:");
     println!("  Robot IP: {}", robot_ip);
     println!("  WebSocket: 0.0.0.0:8080");
+    println!("  Connection Mode: Lazy (connects on first audio)");
     println!();
     
     // Create channel for communication between WebSocket and processing pipeline
@@ -26,14 +27,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  ✓ Channel created with buffer size: 100");
     println!();
     
-    // Spawn audio processing pipeline (establishes WebRTC and streams audio)
+    // Spawn audio processing pipeline (will establish WebRTC when first audio arrives)
     println!("Step 2: Starting audio processing pipeline...");
-    println!("  This will establish WebRTC connection and add audio track");
+    println!("  WebRTC connection will be established when first audio is received");
     let robot_ip_clone = robot_ip.clone();
     let pipeline_handle = tokio::spawn(async move {
         streaming_pipeline::start_pipeline(audio_receiver, robot_ip_clone).await
     });
-    println!("  ✓ Pipeline task started");
+    println!("  ✓ Pipeline task started and waiting");
     println!();
     
     // Start WebSocket server (listens on all interfaces)
@@ -51,10 +52,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Robot IP: {}", robot_ip);
     println!("  Method: Direct WebRTC Audio Track Streaming");
     println!();
+    println!("Status:");
+    println!("  ⏳ Waiting for first audio via WebSocket...");
+    println!("  ⏳ WebRTC will connect automatically on first audio");
+    println!();
     println!("Usage:");
     println!("  Send audio data (MP3/WAV/PCM) via WebSocket");
     println!("  Audio will be decoded and streamed directly to robot");
     println!("  Similar to Python's play_mp3.py example");
+    println!();
+    println!("Client Example:");
+    println!("  python3 audio_stream.py --file audio.mp3");
     println!();
     println!("Configuration:");
     println!("  Set ROBOT_IP environment variable to change robot IP");

@@ -51,8 +51,26 @@ impl UnitreeWebRTCConnection {
     }
 
     /// Connect to the robot via WebRTC
+    /// Audio track must be added BEFORE calling this method
     pub async fn connect(&self) -> Result<()> {
         println!("[WEBRTC] Establishing WebRTC connection to {}", self.robot_ip);
+
+        let peer_connection = self.peer_connection.lock().await;
+        let pc = peer_connection
+            .as_ref()
+            .ok_or_else(|| anyhow!("Peer connection not initialized. Call setup() first."))?;
+
+        // Perform WebRTC signaling with robot
+        self.perform_signaling(pc).await?;
+
+        println!("[WEBRTC] ✓ WebRTC connection established");
+        Ok(())
+    }
+
+    /// Setup the peer connection and data channel
+    /// This must be called BEFORE adding tracks
+    pub async fn setup(&self) -> Result<()> {
+        println!("[WEBRTC] Setting up peer connection...");
 
         // Create a MediaEngine
         let mut media_engine = MediaEngine::default();
@@ -90,7 +108,7 @@ impl UnitreeWebRTCConnection {
             Box::pin(async move {})
         }));
 
-        // Create data channel for audio hub communication
+        // Create data channel for audio hub communication (if needed)
         let data_channel = peer_connection
             .create_data_channel("data", None)
             .await?;
@@ -120,10 +138,7 @@ impl UnitreeWebRTCConnection {
             })
         }));
 
-        // Perform WebRTC signaling with robot
-        self.perform_signaling(&peer_connection).await?;
-
-        println!("[WEBRTC] ✓ WebRTC connection established");
+        println!("[WEBRTC] ✓ Peer connection setup complete");
         Ok(())
     }
 

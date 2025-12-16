@@ -22,35 +22,65 @@ pub async fn start_pipeline(
         // Initialize WebRTC on first audio message
         if !webrtc_initialized {
             println!("\n[PIPELINE] *** First audio received! Initializing WebRTC... ***");
-            println!("[PIPELINE] Establishing WebRTC connection to robot at {}...", robot_ip);
+            println!("[PIPELINE] Setting up WebRTC connection to robot at {}...", robot_ip);
             
             // Create WebRTC connection
             let webrtc_conn = Arc::new(webrtc_connection::UnitreeWebRTCConnection::new(robot_ip.clone()));
-            match webrtc_conn.connect().await {
+            
+            // Step 1: Setup peer connection (like Python: pc = RTCPeerConnection())
+            match webrtc_conn.setup().await {
                 Ok(_) => {
-                    println!("[PIPELINE] ✓ WebRTC connection established");
+                    println!("[PIPELINE] ✓ Peer connection setup complete");
                     
+                    // Step 2: Create audio player and get track
                     // Create channel for sending PCM data to audio player
                     let (sender, receiver) = mpsc::channel::<Vec<u8>>(10);
                     pcm_sender = Some(sender);
                     
-                    // Create audio player with channel
                     let audio_player = webrtc_audio_player::WebRTCAudioPlayer::new(receiver);
                     let audio_track = audio_player.get_track();
                     
-                    // Add audio track to WebRTC connection (like Python's conn.pc.addTrack)
-                    println!("[PIPELINE] Adding audio track to WebRTC connection...");
+                    // Step 3: Add audio track BEFORE creating offer (like Python: conn.pc.addTrack(audio_track))
+                    println!("[PIPELINE] Adding audio track to peer connection...");
                     match webrtc_conn.add_audio_track(audio_track).await {
                         Ok(_) => {
                             println!("[PIPELINE] ✓ Audio track added");
                             
-                            // Start audio playback task
+                            // Step 4: Start audio playback task
                             println!("[PIPELINE] Starting audio playback task...");
                             audio_player.start_playback().await;
-                            println!("[PIPELINE] ✓ Audio player started and ready");
+                            println!("[PIPELINE] ✓ Audio player started");
                             
-                            webrtc_initialized = true;
-                            println!("[PIPELINE] *** WebRTC initialization complete! ***\n");
+                            // Step 5: NOW establish WebRTC connection (creates offer with audio track)
+                            println!("[PIPELINE] Establishing WebRTC connection (creating offer + signaling)...");
+                            match webrtc_conn.connect().await {
+                                Ok(_) => {
+                                    println!("[PIPELINE] ✓ WebRTC connection established");
+                                    webrtc_initialized = true;
+                                    println!("[PIPELINE] *** WebRTC initialization complete! ***\n");
+                                }
+                                Err(e) => {
+                                    eprintln!("[PIPELINE] ✗ Failed to establish WebRTC connection: {}", e);
+                                    eprintln!("[PIPELINE]");
+                                    eprintln!("[PIPELINE] Common issues:");
+                                    eprintln!("[PIPELINE]   1. Wrong robot IP: Current ROBOT_IP={}", robot_ip);
+                                    eprintln!("[PIPELINE]      - Make sure robot is powered on and connected");
+                                    eprintln!("[PIPELINE]      - Check robot's IP address (often 192.168.123.161 for STA mode)");
+                                    eprintln!("[PIPELINE]      - Set correct IP: ROBOT_IP=192.168.123.161 cargo run");
+                                    eprintln!("[PIPELINE]");
+                                    eprintln!("[PIPELINE]   2. Robot WebRTC service not running:");
+                                    eprintln!("[PIPELINE]      - The robot's built-in WebRTC server must be active");
+                                    eprintln!("[PIPELINE]      - Port 8081 must be accessible");
+                                    eprintln!("[PIPELINE]");
+                                    eprintln!("[PIPELINE]   3. Network connectivity:");
+                                    eprintln!("[PIPELINE]      - Can you ping the robot? Try: ping {}", robot_ip);
+                                    eprintln!("[PIPELINE]      - Is the robot on the same network?");
+                                    eprintln!("[PIPELINE]");
+                                    eprintln!("[PIPELINE] Will retry on next audio message...");
+                                    eprintln!("[PIPELINE]");
+                                    continue;
+                                }
+                            }
                         }
                         Err(e) => {
                             eprintln!("[PIPELINE] ✗ Failed to add audio track: {}", e);
@@ -60,7 +90,7 @@ pub async fn start_pipeline(
                     }
                 }
                 Err(e) => {
-                    eprintln!("[PIPELINE] ✗ Failed to establish WebRTC connection: {}", e);
+                    eprintln!("[PIPELINE] ✗ Failed to setup peer connection: {}", e);
                     eprintln!("[PIPELINE] Will retry on next audio message...");
                     continue;
                 }
