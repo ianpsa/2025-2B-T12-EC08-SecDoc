@@ -64,9 +64,12 @@ class WebSocketAudioPlayer:
             # Decode base64 audio
             logger.info("Decoding base64 audio data")
             audio_bytes = base64.b64decode(audio_data_b64)
+            logger.info(f"Decoded audio size: {len(audio_bytes)} bytes")
 
             # Create temporary file
-            temp_filename = f"audio_{asyncio.get_event_loop().time()}.{audio_format}"
+            temp_filename = (
+                f"audio_{int(asyncio.get_event_loop().time())}.{audio_format}"
+            )
             temp_filepath = os.path.join(self.temp_dir, temp_filename)
 
             # Write audio to temporary file
@@ -79,14 +82,22 @@ class WebSocketAudioPlayer:
             await self.audio_hub.upload_audio_file(temp_filepath)
             logger.info("Audio uploaded successfully")
 
+            # Wait for upload to complete
+            logger.info("Waiting for upload to settle...")
+            await asyncio.sleep(0.5)
+
             # Get the UUID of the uploaded file
+            logger.info("Fetching audio list from robot...")
             response = await self.audio_hub.get_audio_list()
+
             if response and isinstance(response, dict):
                 data_str = response.get("data", {}).get("data", "{}")
                 audio_list = json.loads(data_str).get("audio_list", [])
+                logger.info(f"Found {len(audio_list)} audio files on robot")
 
                 # Get the filename without extension
                 filename = os.path.splitext(temp_filename)[0]
+                logger.info(f"Looking for audio with name: {filename}")
 
                 # Find the uploaded audio
                 existing_audio = next(
@@ -96,11 +107,30 @@ class WebSocketAudioPlayer:
 
                 if existing_audio:
                     uuid = existing_audio["UNIQUE_ID"]
-                    logger.info(f"Playing audio with UUID: {uuid}")
-                    await self.audio_hub.play_by_uuid(uuid)
-                    logger.info("Audio playback started")
+                    logger.info(f"Found audio with UUID: {uuid}")
+                    logger.info("Starting audio playback...")
+
+                    # Play the audio
+                    response = await self.audio_hub.play_by_uuid(uuid)
+                    logger.info(f"Playback command sent, response: {response}")
+
+                    # Wait a moment to ensure playback starts
+                    await asyncio.sleep(0.3)
+                    logger.info("Audio playback command completed")
+
+                    # Note: The robot may take a moment to start playing
+                    # You can subscribe to rt/audiohub/player/state to monitor playback status
                 else:
-                    logger.error("Could not find uploaded audio in list")
+                    error_msg = f"Could not find uploaded audio '{filename}' in list"
+                    logger.error(error_msg)
+                    logger.info(
+                        f"Available audio files: {[a['CUSTOM_NAME'] for a in audio_list]}"
+                    )
+                    raise Exception(error_msg)
+            else:
+                error_msg = "Failed to get audio list from robot"
+                logger.error(error_msg)
+                raise Exception(error_msg)
 
             # Cleanup temporary file
             try:
