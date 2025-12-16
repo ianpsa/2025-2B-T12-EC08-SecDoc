@@ -1,0 +1,210 @@
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::sync::Arc;
+use tokio::sync::{mpsc, Mutex, RwLock};
+use webrtc::api::interceptor_registry::register_default_interceptors;
+use webrtc::api::media_engine::MediaEngine;
+use webrtc::api::APIBuilder;
+use webrtc::data_channel::data_channel_message::DataChannelMessage;
+use webrtc::data_channel::RTCDataChannel;
+use webrtc::ice_transport::ice_server::RTCIceServer;
+use webrtc::peer_connection::configuration::RTCConfiguration;
+use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
+use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
+use webrtc::peer_connection::RTCPeerConnection;
+use interceptor::registry::Registry;
+use std::collections::HashMap;
+
+const SIGNALING_PORT: u16 = 8081;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DataChannelRequest {
+    topic: String,
+    data: Value,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DataChannelResponse {
+    pub topic: String,
+    pub data: Value,
+}
+
+/// WebRTC connection manager for Unitree Go2
+pub struct UnitreeWebRTCConnection {
+    robot_ip: String,
+    peer_connection: Arc<Mutex<Option<Arc<RTCPeerConnection>>>>,
+    data_channel: Arc<Mutex<Option<Arc<RTCDataChannel>>>>,
+    response_handlers: Arc<RwLock<HashMap<String, mpsc::Sender<DataChannelResponse>>>>,
+}
+
+impl UnitreeWebRTCConnection {
+    pub fn new(robot_ip: String) -> Self {
+        Self {
+            robot_ip,
+            peer_connection: Arc::new(Mutex::new(None)),
+            data_channel: Arc::new(Mutex::new(None)),
+            response_handlers: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Connect to the robot via WebRTC
+    pub async fn connect(&self) -> Result<()> {
+        println!("[WEBRTC] Establishing WebRTC connection to {}", self.robot_ip);
+
+        // Create a MediaEngine
+        let mut media_engine = MediaEngine::default();
+        
+        // Create an InterceptorRegistry
+        let registry = Registry::new();
+        
+        // Register default interceptors
+        let registry = register_default_interceptors(registry, &mut media_engine)?;
+
+        // Create the API object with the MediaEngine
+        let api = APIBuilder::new()
+            .with_media_engine(media_engine)
+            .with_interceptor_registry(registry)
+            .build();
+
+        // Configure ICE servers
+        let config = RTCConfiguration {
+            ice_servers: vec![RTCIceServer {
+                urls: vec!["stun:stun.l.google.com:19302".to_string()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        // Create peer connection
+        let peer_connection = Arc::new(api.new_peer_connection(config).await?);
+        
+        // Store peer connection
+        *self.peer_connection.lock().await = Some(peer_connection.clone());
+
+        // Set up connection state handler
+        peer_connection.on_peer_connection_state_change(Box::new(move |state: RTCPeerConnectionState| {
+            println!("[WEBRTC] Connection state changed: {:?}", state);
+            Box::pin(async move {})
+        }));
+
+        // Create data channel for audio hub communication
+        let data_channel = peer_connection
+            .create_data_channel("data", None)
+            .await?;
+
+        // Store data channel
+        *self.data_channel.lock().await = Some(data_channel.clone());
+
+        // Set up data channel handlers
+        let response_handlers = self.response_handlers.clone();
+        data_channel.on_open(Box::new(move || {
+            println!("[WEBRTC] Data channel opened");
+            Box::pin(async {})
+        }));
+
+        let response_handlers_clone = response_handlers.clone();
+        data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
+            let handlers = response_handlers_clone.clone();
+            Box::pin(async move {
+                if let Ok(text) = String::from_utf8(msg.data.to_vec()) {
+                    if let Ok(response) = serde_json::from_str::<DataChannelResponse>(&text) {
+                        let handlers_lock = handlers.read().await;
+                        if let Some(sender) = handlers_lock.get(&response.topic) {
+                            let _ = sender.send(response).await;
+                        }
+                    }
+                }
+            })
+        }));
+
+        // Perform WebRTC signaling with robot
+        self.perform_signaling(&peer_connection).await?;
+
+        println!("[WEBRTC] ✓ WebRTC connection established");
+        Ok(())
+    }
+
+    /// Perform WebRTC signaling exchange with the robot
+    async fn perform_signaling(&self, pc: &Arc<RTCPeerConnection>) -> Result<()> {
+        println!("[WEBRTC] Starting signaling process...");
+
+        // Create offer
+        let offer = pc.create_offer(None).await?;
+        pc.set_local_description(offer.clone()).await?;
+
+        println!("[WEBRTC] Created and set local offer");
+
+        // Send offer to robot and get answer
+        let client = reqwest::Client::new();
+        let signaling_url = format!("http://{}:{}/webrtc/offer", self.robot_ip, SIGNALING_PORT);
+        
+        let response = client
+            .post(&signaling_url)
+            .json(&serde_json::json!({
+                "type": "offer",
+                "sdp": offer.sdp
+            }))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!("Signaling failed: {}", response.status()));
+        }
+
+        let answer: Value = response.json().await?;
+        let answer_sdp = answer["sdp"]
+            .as_str()
+            .ok_or_else(|| anyhow!("No SDP in answer"))?;
+
+        // Set remote description
+        let remote_desc = RTCSessionDescription::answer(answer_sdp.to_string())?;
+        pc.set_remote_description(remote_desc).await?;
+
+        println!("[WEBRTC] ✓ Signaling complete");
+        Ok(())
+    }
+
+    /// Publish a request and wait for response
+    pub async fn publish_request(&self, topic: &str, data: Value) -> Result<DataChannelResponse> {
+        let data_channel = self.data_channel.lock().await;
+        let dc = data_channel
+            .as_ref()
+            .ok_or_else(|| anyhow!("Data channel not connected"))?;
+
+        // Create response channel
+        let (tx, mut rx) = mpsc::channel::<DataChannelResponse>(1);
+        
+        // Register response handler
+        {
+            let mut handlers = self.response_handlers.write().await;
+            handlers.insert(topic.to_string(), tx);
+        }
+
+        // Send request
+        let request = DataChannelRequest {
+            topic: topic.to_string(),
+            data,
+        };
+        
+        let request_json = serde_json::to_string(&request)?;
+        dc.send_text(request_json).await?;
+
+        // Wait for response with timeout
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            rx.recv()
+        )
+        .await
+        .map_err(|_| anyhow!("Request timeout"))?
+        .ok_or_else(|| anyhow!("Response channel closed"))?;
+
+        // Clean up handler
+        {
+            let mut handlers = self.response_handlers.write().await;
+            handlers.remove(topic);
+        }
+
+        Ok(response)
+    }
+}
