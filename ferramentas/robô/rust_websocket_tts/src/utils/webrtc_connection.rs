@@ -251,12 +251,14 @@ impl UnitreeWebRTCConnection {
 
         let duration = start.elapsed();
         println!("[WEBRTC] Received response in {:?}", duration);
-        println!("[WEBRTC] Response status: {}", response.status());
+        
+        let status = response.status();
+        println!("[WEBRTC] Response status: {}", status);
 
-        if !response.status().is_success() {
+        if !status.is_success() {
             let body = response.text().await.unwrap_or_else(|_| "Unable to read body".to_string());
             println!("[WEBRTC] ❌ Error response body: {}", body);
-            return Err(anyhow!("Signaling failed with status {}", response.status()));
+            return Err(anyhow!("Signaling failed with status {}", status));
         }
 
         let answer: Value = response.json().await.map_err(|e| {
