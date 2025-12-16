@@ -66,7 +66,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("Configuration:");
     println!("  Set ROBOT_IP environment variable to change robot IP");
-    println!("  Example: ROBOT_IP=192.168.123.161 cargo run");
+    println!("  Default: 127.0.0.1 (localhost - for running ON robot)");
+    println!("  Example: ROBOT_IP=127.0.0.1 cargo run");
+    println!();
+    println!("⚠️  IMPORTANT: This service must run ON the robot!");
+    println!("   See DEPLOY_ON_ROBOT.md for deployment instructions");
     println!("==============================================");
     println!();
     

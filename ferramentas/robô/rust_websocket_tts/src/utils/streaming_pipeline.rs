@@ -78,18 +78,27 @@ pub async fn start_pipeline(
                                     eprintln!("[PIPELINE] ✗ Failed to establish WebRTC connection: {}", e);
                                     eprintln!("[PIPELINE]");
                                     eprintln!("[PIPELINE] Common issues:");
-                                    eprintln!("[PIPELINE]   1. Wrong robot IP: Current ROBOT_IP={}", robot_ip);
-                                    eprintln!("[PIPELINE]      - Make sure robot is powered on and connected");
-                                    eprintln!("[PIPELINE]      - Check robot's IP address (often 192.168.123.161 for STA mode)");
-                                    eprintln!("[PIPELINE]      - Set correct IP: ROBOT_IP=192.168.123.161 cargo run");
+                                    eprintln!("[PIPELINE]   1. Robot IP: Current ROBOT_IP={}", robot_ip);
+                                    if robot_ip == "127.0.0.1" {
+                                        eprintln!("[PIPELINE]      ✓ Using localhost (correct for running ON robot)");
+                                        eprintln!("[PIPELINE]      - Is this service running ON the robot itself?");
+                                        eprintln!("[PIPELINE]      - Check if robot's WebRTC service is running:");
+                                        eprintln!("[PIPELINE]        curl http://127.0.0.1:8081/");
+                                    } else {
+                                        eprintln!("[PIPELINE]      ⚠ Using external IP (only works if running on laptop)");
+                                        eprintln!("[PIPELINE]      - This service should run ON the robot!");
+                                        eprintln!("[PIPELINE]      - See DEPLOY_ON_ROBOT.md for instructions");
+                                        eprintln!("[PIPELINE]      - If running on robot, use: ROBOT_IP=127.0.0.1");
+                                    }
                                     eprintln!("[PIPELINE]");
                                     eprintln!("[PIPELINE]   2. Robot WebRTC service not running:");
                                     eprintln!("[PIPELINE]      - The robot's built-in WebRTC server must be active");
-                                    eprintln!("[PIPELINE]      - Port 8081 must be accessible");
+                                    eprintln!("[PIPELINE]      - Port 8081 must be listening on localhost");
                                     eprintln!("[PIPELINE]");
-                                    eprintln!("[PIPELINE]   3. Network connectivity:");
-                                    eprintln!("[PIPELINE]      - Can you ping the robot? Try: ping {}", robot_ip);
-                                    eprintln!("[PIPELINE]      - Is the robot on the same network?");
+                                    eprintln!("[PIPELINE]   3. Architecture:");
+                                    eprintln!("[PIPELINE]      - This service MUST run ON the robot (not laptop)");
+                                    eprintln!("[PIPELINE]      - Robot's WebRTC only accessible from localhost");
+                                    eprintln!("[PIPELINE]      - Send audio from laptop to robot via WebSocket");
                                     eprintln!("[PIPELINE]");
                                     eprintln!("[PIPELINE] Will retry on next audio message...");
                                     eprintln!("[PIPELINE]");
