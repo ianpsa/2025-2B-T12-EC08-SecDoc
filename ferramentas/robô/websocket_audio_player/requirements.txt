@@ -1,0 +1,10 @@
+websockets>=12.0
+aioice==0.10.1
+aiortc==1.14.0
+av==16.0.1
+cryptography==46.0.3
+pyOpenSSL==25.3.0
+pycryptodome==3.23.0
+
+# Install the unitree_webrtc_connect package from the parent go2_webrtc directory
+# Run: pip install -e ../../../go2_webrtc
