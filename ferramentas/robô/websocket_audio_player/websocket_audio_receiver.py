@@ -276,6 +276,13 @@ class WebSocketAudioStreamer:
 
                             logger.info("✅ Audio playback completed")
 
+                            # Don't reconnect after successful playback
+                            logger.info(
+                                "🛑 Stopping reconnection loop (audio played successfully)"
+                            )
+                            self.should_stop = True
+                            return
+
                         except json.JSONDecodeError as e:
                             logger.error(f"Invalid JSON: {e}")
                         except Exception as e:
