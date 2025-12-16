@@ -213,34 +213,74 @@ impl UnitreeWebRTCConnection {
         pc.set_local_description(offer.clone()).await?;
 
         println!("[WEBRTC] Created and set local offer");
+        println!("[WEBRTC] Offer SDP (first 200 chars): {}", 
+            offer.sdp.chars().take(200).collect::<String>());
 
         // Send offer to robot and get answer
-        let client = reqwest::Client::new();
-        let signaling_url = format!("http://{}:{}/webrtc/offer", self.robot_ip, SIGNALING_PORT);
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()?;
+        // Note: The correct endpoint is /offer, NOT /webrtc/offer
+        // This matches the Python SDK's send_sdp_to_local_peer_old_method
+        let signaling_url = format!("http://{}:{}/offer", self.robot_ip, SIGNALING_PORT);
         
+        println!("[WEBRTC] Sending offer to: {}", signaling_url);
+        println!("[WEBRTC] Request payload type: offer");
+        
+        // Payload must match Python SDK format:
+        // { "id": "", "sdp": "...", "type": "offer", "token": "" }
+        let payload = serde_json::json!({
+            "id": "",
+            "sdp": offer.sdp,
+            "type": "offer",
+            "token": ""
+        });
+        
+        println!("[WEBRTC] Request payload: {}", serde_json::to_string_pretty(&payload).unwrap_or_default());
+        
+        let start = std::time::Instant::now();
         let response = client
             .post(&signaling_url)
-            .json(&serde_json::json!({
-                "type": "offer",
-                "sdp": offer.sdp
-            }))
+            .json(&payload)
             .send()
-            .await?;
+            .await
+            .map_err(|e| {
+                println!("[WEBRTC] ❌ HTTP request failed: {}", e);
+                anyhow!("HTTP request failed: {}", e)
+            })?;
+
+        let duration = start.elapsed();
+        println!("[WEBRTC] Received response in {:?}", duration);
+        println!("[WEBRTC] Response status: {}", response.status());
 
         if !response.status().is_success() {
-            return Err(anyhow!("Signaling failed: {}", response.status()));
+            let body = response.text().await.unwrap_or_else(|_| "Unable to read body".to_string());
+            println!("[WEBRTC] ❌ Error response body: {}", body);
+            return Err(anyhow!("Signaling failed with status {}", response.status()));
         }
 
-        let answer: Value = response.json().await?;
+        let answer: Value = response.json().await.map_err(|e| {
+            println!("[WEBRTC] ❌ Failed to parse JSON response: {}", e);
+            anyhow!("Failed to parse answer JSON: {}", e)
+        })?;
+        
+        println!("[WEBRTC] Received answer JSON: {}", serde_json::to_string_pretty(&answer).unwrap_or_default());
+        
         let answer_sdp = answer["sdp"]
             .as_str()
-            .ok_or_else(|| anyhow!("No SDP in answer"))?;
+            .ok_or_else(|| {
+                println!("[WEBRTC] ❌ No 'sdp' field in answer");
+                anyhow!("No SDP in answer")
+            })?;
+
+        println!("[WEBRTC] Answer SDP (first 200 chars): {}", 
+            answer_sdp.chars().take(200).collect::<String>());
 
         // Set remote description
         let remote_desc = RTCSessionDescription::answer(answer_sdp.to_string())?;
         pc.set_remote_description(remote_desc).await?;
 
-        println!("[WEBRTC] ✓ Signaling complete");
+        println!("[WEBRTC] ✓ Signaling complete - remote description set");
         Ok(())
     }
 
