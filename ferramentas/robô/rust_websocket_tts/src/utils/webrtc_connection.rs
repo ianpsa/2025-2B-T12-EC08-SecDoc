@@ -13,6 +13,8 @@ use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::rtp_transceiver::rtp_sender::RTCRtpSender;
+use webrtc::track::track_local::TrackLocal;
 use interceptor::registry::Registry;
 use std::collections::HashMap;
 
@@ -206,5 +208,24 @@ impl UnitreeWebRTCConnection {
         }
 
         Ok(response)
+    }
+
+    /// Add an audio track to the peer connection (similar to Python's conn.pc.addTrack)
+    pub async fn add_audio_track(
+        &self,
+        track: Arc<dyn TrackLocal + Send + Sync>,
+    ) -> Result<Arc<RTCRtpSender>> {
+        let peer_connection = self.peer_connection.lock().await;
+        let pc = peer_connection
+            .as_ref()
+            .ok_or_else(|| anyhow!("Peer connection not established"))?;
+
+        let rtp_sender = pc
+            .add_track(track)
+            .await
+            .map_err(|e| anyhow!("Failed to add track: {}", e))?;
+
+        println!("[WEBRTC] Audio track added to peer connection");
+        Ok(rtp_sender)
     }
 }
