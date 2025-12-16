@@ -24,11 +24,12 @@ logger = logging.getLogger(__name__)
 # ⚙️ CONFIGURATION
 # ==================================================================================
 
-# ✅ SET THIS TO TRUE (Since it stopped playing, we know we need this!)
+# Set to True to play audio manually (Required if robot doesn't auto-play)
 SEND_PLAY_COMMAND = True  
 
-# Ignore duplicate audio messages received within this many seconds
-IGNORE_DUPLICATES_SECONDS = 30.0 
+# If true, we wait for the audio to finish playing before processing the next chunk.
+# This creates a "streaming" effect without cutting off the previous sentence.
+WAIT_FOR_AUDIO_DURATION = True
 
 # ==================================================================================
 
@@ -50,11 +51,7 @@ class WebSocketAudioStreamer:
         self.should_stop = False
         
         self.audio_queue = asyncio.Queue()
-        self.upload_lock = asyncio.Lock()
-        
-        # State to prevent loops/duplicates
-        self.last_played_hash = None
-        self.last_played_time = 0
+        self.upload_lock = asyncio.Lock() # Prevents simultaneous uploads
         
         logger.info(f"Temporary directory created: {self.temp_dir}")
 
@@ -67,29 +64,52 @@ class WebSocketAudioStreamer:
         logger.info("✅ WebRTC connection established")
         self.audio_hub = WebRTCAudioHub(self.webrtc_conn, logger)
 
+    async def get_uuid_with_retry(self, target_filename, retries=5, delay=1.0):
+        """Polls the robot multiple times until the file appears in the list."""
+        target_name = os.path.splitext(os.path.basename(target_filename))[0]
+        
+        for i in range(retries):
+            try:
+                # logger.info(f"🔎 Scanning for file '{target_name}' (Attempt {i+1}/{retries})...")
+                response = await self.audio_hub.get_audio_list()
+                
+                if response:
+                    # Handle double-encoded JSON if necessary
+                    if isinstance(response, str):
+                        data_obj = json.loads(response)
+                    else:
+                        data_obj = response
+                        
+                    inner_data = data_obj.get("data", {})
+                    if isinstance(inner_data, str):
+                        inner_data = json.loads(inner_data)
+                        
+                    audio_list = inner_data.get("audio_list", [])
+                    
+                    # Find match
+                    match = next((a for a in audio_list if a["CUSTOM_NAME"] == target_name), None)
+                    if match:
+                        return match["UNIQUE_ID"]
+            except Exception as e:
+                logger.warning(f"Error checking list: {e}")
+            
+            # Wait before next check
+            await asyncio.sleep(delay)
+            
+        return None
+
     async def process_audio_queue(self):
-        """Worker that processes audio one by one"""
+        """Worker that processes audio sequentially"""
         logger.info("🎶 Audio processing worker started")
+        
         while not self.should_stop:
             try:
+                # 1. Get audio data from queue
                 audio_data_b64, audio_format = await self.audio_queue.get()
                 
-                # --- DEDUPLICATION CHECK ---
-                audio_hash = hashlib.md5(audio_data_b64.encode()).hexdigest()
-                current_time = time.time()
-                
-                if (audio_hash == self.last_played_hash and 
-                    (current_time - self.last_played_time) < IGNORE_DUPLICATES_SECONDS):
-                    logger.warning("⚠️  Duplicate received (ignoring)")
-                    self.audio_queue.task_done()
-                    continue
-
-                self.last_played_hash = audio_hash
-                self.last_played_time = current_time
-                
-                # Use lock to ensure strictly sequential processing
+                # 2. Process strictly one by one (Sequential Playback)
                 async with self.upload_lock:
-                    await self.convert_and_play_audio(audio_data_b64, audio_format)
+                    await self.convert_upload_and_play(audio_data_b64, audio_format)
                 
                 self.audio_queue.task_done()
                 
@@ -98,69 +118,60 @@ class WebSocketAudioStreamer:
             except Exception as e:
                 logger.error(f"Worker error: {e}")
 
-    async def convert_and_play_audio(self, audio_data_b64: str, audio_format: str):
+    async def convert_upload_and_play(self, audio_data_b64: str, audio_format: str):
         try:
+            # --- 1. Decode & Save ---
             audio_bytes = base64.b64decode(audio_data_b64)
             timestamp = int(time.time() * 1000)
             
-            # File Paths
             input_path = os.path.join(self.temp_dir, f"in_{timestamp}.{audio_format}")
             output_path = os.path.join(self.temp_dir, f"out_{timestamp}.wav")
 
-            # Write Input
             with open(input_path, "wb") as f:
                 f.write(audio_bytes)
             
-            # Convert to WAV (16kHz, Mono)
+            # --- 2. Convert & Get Duration ---
+            audio_duration_sec = 0
             try:
                 audio = AudioSegment.from_file(input_path, format=audio_format)
+                
+                # Store duration so we know how long to wait
+                audio_duration_sec = len(audio) / 1000.0
+                
+                # Convert to Unitree Format (16kHz, Mono, 16-bit)
                 audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
                 audio.export(output_path, format="wav")
             except Exception as e:
                 logger.error(f"❌ Conversion failed: {e}")
                 return
 
-            # Upload
-            logger.info(f"📤 Uploading {len(audio_bytes)} bytes to robot...")
+            # --- 3. Upload ---
+            # logger.info(f"📤 Uploading chunk ({audio_duration_sec:.2f}s)...")
             await self.audio_hub.upload_audio_file(output_path)
             
-            # Wait for filesystem to settle
-            await asyncio.sleep(1.0)
-
-            # Explicit Play Command
+            # --- 4. Find File on Robot (With Retry) ---
             if SEND_PLAY_COMMAND:
-                logger.info("🔍 Searching for file on robot...")
-                response = await self.audio_hub.get_audio_list()
+                # Short initial wait for FS to flush
+                await asyncio.sleep(0.5) 
                 
-                if response:
-                    # Parse the nested JSON response
-                    try:
-                        if isinstance(response, str):
-                            data_obj = json.loads(response)
-                        else:
-                            data_obj = response
-                            
-                        inner_data = data_obj.get("data", {})
-                        if isinstance(inner_data, str):
-                            inner_data = json.loads(inner_data) # sometimes it's double encoded
-                            
-                        audio_list = inner_data.get("audio_list", [])
-                        
-                        # Find our file
-                        target_name = os.path.splitext(os.path.basename(output_path))[0]
-                        
-                        match = next((a for a in audio_list if a["CUSTOM_NAME"] == target_name), None)
-                        if match:
-                            uuid = match["UNIQUE_ID"]
-                            logger.info(f"▶️  PLAYING (UUID: {uuid})")
-                            await self.audio_hub.play_by_uuid(uuid)
-                        else:
-                            logger.warning(f"⚠️ Could not find '{target_name}' in robot list")
-                    except Exception as json_err:
-                        logger.error(f"❌ Error parsing robot audio list: {json_err}")
-            
-            # Cleanup
-            await asyncio.sleep(1.0)
+                uuid = await self.get_uuid_with_retry(output_path)
+                
+                if uuid:
+                    logger.info(f"▶️  Playing Chunk ({audio_duration_sec:.1f}s)")
+                    await self.audio_hub.play_by_uuid(uuid)
+                    
+                    # --- 5. STREAMING LOGIC ---
+                    if WAIT_FOR_AUDIO_DURATION and audio_duration_sec > 0:
+                        # Wait for the audio to actually finish playing before 
+                        # letting the next chunk start. This prevents cuts.
+                        # We subtract a tiny bit (0.2s) to make the transition tighter.
+                        wait_time = max(0, audio_duration_sec - 0.2)
+                        await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"❌ Timed out: Could not find file '{os.path.basename(output_path)}' on robot")
+
+            # --- 6. Cleanup ---
+            # Clean up immediately to keep disk usage low
             if os.path.exists(input_path): os.remove(input_path)
             if os.path.exists(output_path): os.remove(output_path)
 
@@ -178,6 +189,7 @@ class WebSocketAudioStreamer:
                         try:
                             data = json.loads(message)
                             if "audio" in data:
+                                # Put in queue. The Worker will process it sequentially.
                                 await self.audio_queue.put((data["audio"], data.get("format", "mp3")))
                         except Exception:
                             pass
