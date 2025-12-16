@@ -54,9 +54,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         loop {
             {
                 let mut client = ros_client_spin.lock().await;
-                client.node.spin_once(std::time::Duration::from_millis(10));
+                client.node.spin_once(std::time::Duration::from_millis(1));
             }
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
         }
     });
 
@@ -94,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Tenta receber comando (timeout de 100ms)
             let cmd_result = {
                 let rx_guard = rx_clone.lock().unwrap();
-                rx_guard.recv_timeout(std::time::Duration::from_millis(100))
+                rx_guard.recv_timeout(std::time::Duration::from_millis(10))
             };
             
             match cmd_result {

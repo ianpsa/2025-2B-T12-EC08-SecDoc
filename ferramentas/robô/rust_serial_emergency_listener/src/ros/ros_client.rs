@@ -61,7 +61,7 @@ impl EmergencyStopClient {
                     api_id: 1006, // RECOVER
                 },
                 policy: r2r::unitree_api::msg::RequestPolicy {
-                    priority: 255, 
+                    priority: 250, 
                     noreply: false,
                 },
                 ..Default::default()
