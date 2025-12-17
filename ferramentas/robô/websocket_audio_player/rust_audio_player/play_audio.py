@@ -10,6 +10,7 @@ import json
 import sys
 import os
 import logging
+from typing import Optional
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ class RobotPlayer:
         self.connected = True
         logger.info("WebRTC ready")
 
-    async def find_uuid(self, name: str) -> str | None:
+    async def find_uuid(self, name: str) -> Optional[str]:
         try:
             response = await self.audio_hub.get_audio_list()
             if response:
