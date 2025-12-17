@@ -57,7 +57,15 @@ impl AudioProcessor {
         let _ = tokio::fs::remove_file(&input_path).await;
 
         match status {
-            Ok(s) if s.success() => Some(output_path),
+            Ok(s) if s.success() => {
+                if output_path.exists() {
+                    info!("Converted: {:?}", output_path);
+                    Some(output_path)
+                } else {
+                    error!("FFmpeg succeeded but output missing");
+                    None
+                }
+            }
             Ok(s) => {
                 error!("FFmpeg exited with: {}", s);
                 None

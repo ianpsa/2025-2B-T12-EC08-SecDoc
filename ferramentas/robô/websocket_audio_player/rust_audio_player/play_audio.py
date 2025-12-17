@@ -57,13 +57,18 @@ class RobotPlayer:
         return None
 
     async def play(self, wav_path: str) -> bool:
+        logger.info(f"Playing: {wav_path}")
+        
         if not os.path.exists(wav_path):
             logger.error(f"File not found: {wav_path}")
             return False
 
         try:
+            file_size = os.path.getsize(wav_path)
+            logger.info(f"File size: {file_size} bytes")
             audio = AudioSegment.from_wav(wav_path)
             duration = len(audio) / 1000.0
+            logger.info(f"Duration: {duration:.1f}s")
         except Exception as e:
             logger.error(f"Read error: {e}")
             return False

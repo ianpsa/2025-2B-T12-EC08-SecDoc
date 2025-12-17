@@ -56,10 +56,12 @@ async fn main() {
 
         tokio::spawn(async move {
             if let Some(wav_path) = processor.decode_and_convert(&msg.audio, &msg.format).await {
-                player.play_audio(&wav_path).await;
-                // Delay cleanup to ensure file is read
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                processor.cleanup(&wav_path).await;
+                if wav_path.exists() {
+                    player.play_audio(&wav_path).await;
+                    processor.cleanup(&wav_path).await;
+                } else {
+                    error!("WAV file missing: {:?}", wav_path);
+                }
             }
         });
     }

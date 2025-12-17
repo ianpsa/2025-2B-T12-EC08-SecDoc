@@ -3,13 +3,14 @@ use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info};
 
 pub struct RobotPlayer {
-    process: Arc<Mutex<Option<Child>>>,
+    _process: Arc<Mutex<Option<Child>>>,
     stdin: Arc<Mutex<Option<tokio::process::ChildStdin>>>,
     ready: Arc<Mutex<bool>>,
+    done_rx: Arc<Mutex<mpsc::Receiver<()>>>,
 }
 
 impl RobotPlayer {
@@ -34,32 +35,39 @@ impl RobotPlayer {
         let stdin = child.stdin.take()?;
         let stdout = child.stdout.take()?;
 
+        let (done_tx, done_rx) = mpsc::channel::<()>(32);
+
         let player = Self {
-            process: Arc::new(Mutex::new(Some(child))),
+            _process: Arc::new(Mutex::new(Some(child))),
             stdin: Arc::new(Mutex::new(Some(stdin))),
             ready: Arc::new(Mutex::new(false)),
+            done_rx: Arc::new(Mutex::new(done_rx)),
         };
 
-        // Wait for "READY" signal
         let ready_flag = Arc::clone(&player.ready);
         tokio::spawn(async move {
             let mut reader = BufReader::new(stdout);
             let mut line = String::new();
 
-            while reader.read_line(&mut line).await.is_ok() {
-                let msg = line.trim();
-                if msg == "READY" {
-                    info!("Python player ready");
-                    *ready_flag.lock().await = true;
-                } else if msg == "DONE" {
-                    // Playback completed
-                }
+            loop {
                 line.clear();
+                match reader.read_line(&mut line).await {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        let msg = line.trim();
+                        if msg == "READY" {
+                            info!("Python player ready");
+                            *ready_flag.lock().await = true;
+                        } else if msg == "DONE" {
+                            let _ = done_tx.send(()).await;
+                        }
+                    }
+                    Err(_) => break,
+                }
             }
         });
 
-        // Wait for ready
-        for _ in 0..60 {
+        for _ in 0..100 {
             if *player.ready.lock().await {
                 return Some(player);
             }
@@ -76,13 +84,30 @@ impl RobotPlayer {
             None => return false,
         };
 
+        info!("Sending: {}", wav_path.file_name().unwrap_or_default().to_string_lossy());
+
         let mut stdin_guard = self.stdin.lock().await;
         if let Some(ref mut stdin) = *stdin_guard {
             let cmd = format!("{}\n", path_str);
             if stdin.write_all(cmd.as_bytes()).await.is_ok() {
                 let _ = stdin.flush().await;
-                info!("Sent to player: {}", wav_path.file_name().unwrap_or_default().to_string_lossy());
-                return true;
+                drop(stdin_guard);
+
+                // Wait for Python to finish
+                let mut rx = self.done_rx.lock().await;
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(120),
+                    rx.recv()
+                ).await {
+                    Ok(Some(())) => {
+                        info!("Playback complete");
+                        return true;
+                    }
+                    _ => {
+                        error!("Timeout waiting for playback");
+                        return false;
+                    }
+                }
             }
         }
         false
