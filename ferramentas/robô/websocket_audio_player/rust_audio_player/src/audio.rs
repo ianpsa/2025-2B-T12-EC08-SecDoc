@@ -20,10 +20,10 @@ impl AudioProcessor {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_millis();
+            .as_nanos();
 
-        let input_path = self.temp_dir.join(format!("M{}.{}", timestamp, format));
-        let output_path = self.temp_dir.join(format!("M{}.wav", timestamp));
+        let input_path = self.temp_dir.join(format!("A{}.{}", timestamp, format));
+        let output_path = self.temp_dir.join(format!("A{}.wav", timestamp));
 
         let audio_bytes = match base64::engine::general_purpose::STANDARD.decode(audio_b64) {
             Ok(bytes) => bytes,

@@ -76,17 +76,17 @@ class RobotPlayer:
         # Use filename from path (e.g., M1234567890.wav -> M1234567890)
         name = os.path.splitext(os.path.basename(wav_path))[0]
 
-        # Upload with retry
-        uuid = None
-        for attempt in range(3):
+        # Check if already exists
+        uuid = await self.find_uuid(name)
+        
+        if not uuid:
+            # Upload
             await self.audio_hub.upload_audio_file(wav_path)
-            for _ in range(4):
-                await asyncio.sleep(0.3)
+            for _ in range(6):
+                await asyncio.sleep(0.2)
                 uuid = await self.find_uuid(name)
                 if uuid:
                     break
-            if uuid:
-                break
 
         if uuid:
             logger.info(f"Playing ({duration:.1f}s)")
