@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Minimal script to play a WAV file on the Unitree robot via WebRTC.
-Called by the Rust audio player: python3 play_audio.py <robot_ip> <wav_file>
+Persistent WebRTC audio player.
+Maintains connection to robot and plays WAV files received via stdin.
+Usage: python3 play_audio.py <robot_ip>
+Send file paths via stdin (one per line).
 """
 import asyncio
 import json
 import sys
 import os
-import time
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%H:%M:%S')
@@ -21,11 +22,12 @@ from unitree_webrtc_connect.webrtc_audiohub import WebRTCAudioHub
 from pydub import AudioSegment
 
 
-class RobotAudioPlayer:
+class RobotPlayer:
     def __init__(self, robot_ip: str):
         self.robot_ip = robot_ip
         self.webrtc_conn = None
         self.audio_hub = None
+        self.connected = False
 
     async def connect(self):
         logger.info(f"Connecting to robot at {self.robot_ip}")
@@ -33,11 +35,12 @@ class RobotAudioPlayer:
             WebRTCConnectionMethod.LocalSTA, ip=self.robot_ip
         )
         await self.webrtc_conn.connect()
-        logger.info("✅ WebRTC Connected")
         self.audio_hub = WebRTCAudioHub(self.webrtc_conn, logger)
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(2.0)
+        self.connected = True
+        logger.info("WebRTC ready")
 
-    async def find_uuid_in_list(self, target_name):
+    async def find_uuid(self, name: str) -> str | None:
         try:
             response = await self.audio_hub.get_audio_list()
             if response:
@@ -46,7 +49,7 @@ class RobotAudioPlayer:
                 if isinstance(inner, str):
                     inner = json.loads(inner)
                 for audio in inner.get("audio_list", []):
-                    if target_name in audio["CUSTOM_NAME"]:
+                    if name in audio["CUSTOM_NAME"]:
                         return audio["UNIQUE_ID"]
         except Exception:
             pass
@@ -59,49 +62,62 @@ class RobotAudioPlayer:
 
         try:
             audio = AudioSegment.from_wav(wav_path)
-            duration_sec = len(audio) / 1000.0
+            duration = len(audio) / 1000.0
         except Exception as e:
-            logger.error(f"Failed to read WAV: {e}")
+            logger.error(f"Read error: {e}")
             return False
 
-        timestamp = int(time.time() * 1000)
-        base_name = f"Music_{timestamp}"
+        # Use filename from path (e.g., M1234567890.wav -> M1234567890)
+        name = os.path.splitext(os.path.basename(wav_path))[0]
 
         # Upload with retry
-        success_uuid = None
-        for attempt in range(1, 4):
+        uuid = None
+        for attempt in range(3):
             await self.audio_hub.upload_audio_file(wav_path)
-            for _ in range(5):
-                await asyncio.sleep(0.5)
-                success_uuid = await self.find_uuid_in_list(base_name)
-                if success_uuid:
+            for _ in range(4):
+                await asyncio.sleep(0.3)
+                uuid = await self.find_uuid(name)
+                if uuid:
                     break
-            if success_uuid:
+            if uuid:
                 break
-            logger.warning(f"Upload attempt {attempt} failed, retrying...")
 
-        if success_uuid:
-            logger.info(f"▶️  Playing ({duration_sec:.1f}s)")
-            await self.audio_hub.play_by_uuid(success_uuid)
-            await asyncio.sleep(max(0, duration_sec - 0.2))
+        if uuid:
+            logger.info(f"Playing ({duration:.1f}s)")
+            await self.audio_hub.play_by_uuid(uuid)
+            await asyncio.sleep(max(0, duration - 0.3))
             return True
         else:
-            logger.error("❌ Failed to upload audio")
+            logger.error("Upload failed")
             return False
 
 
 async def main():
-    if len(sys.argv) < 3:
-        print(f"Usage: {sys.argv[0]} <robot_ip> <wav_file>")
+    if len(sys.argv) < 2:
+        print(f"Usage: {sys.argv[0]} <robot_ip>", file=sys.stderr)
         sys.exit(1)
 
-    robot_ip = sys.argv[1]
-    wav_file = sys.argv[2]
-
-    player = RobotAudioPlayer(robot_ip)
+    player = RobotPlayer(sys.argv[1])
     await player.connect()
-    success = await player.play(wav_file)
-    sys.exit(0 if success else 1)
+
+    print("READY", flush=True)
+
+    loop = asyncio.get_event_loop()
+    reader = asyncio.StreamReader()
+    protocol = asyncio.StreamReaderProtocol(reader)
+    await loop.connect_read_pipe(lambda: protocol, sys.stdin)
+
+    while True:
+        try:
+            line = await reader.readline()
+            if not line:
+                break
+            path = line.decode().strip()
+            if path:
+                await player.play(path)
+                print("DONE", flush=True)
+        except Exception as e:
+            logger.error(f"Error: {e}")
 
 
 if __name__ == "__main__":
@@ -109,5 +125,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         pass
-
-

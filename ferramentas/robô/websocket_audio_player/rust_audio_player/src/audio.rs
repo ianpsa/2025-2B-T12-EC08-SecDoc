@@ -22,8 +22,8 @@ impl AudioProcessor {
             .unwrap()
             .as_millis();
 
-        let input_path = self.temp_dir.join(format!("audio_{}.{}", timestamp, format));
-        let output_path = self.temp_dir.join(format!("audio_{}.wav", timestamp));
+        let input_path = self.temp_dir.join(format!("M{}.{}", timestamp, format));
+        let output_path = self.temp_dir.join(format!("M{}.wav", timestamp));
 
         let audio_bytes = match base64::engine::general_purpose::STANDARD.decode(audio_b64) {
             Ok(bytes) => bytes,
