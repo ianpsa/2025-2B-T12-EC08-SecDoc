@@ -10,6 +10,9 @@ import json
 import sys
 import os
 import logging
+import hashlib
+import base64
+import time
 from typing import Optional
 
 # Add go2_webrtc to path for unitree modules
@@ -18,7 +21,7 @@ GO2_WEBRTC_PATH = os.path.join(SCRIPT_DIR, "..", "go2_webrtc")
 if os.path.exists(GO2_WEBRTC_PATH):
     sys.path.insert(0, GO2_WEBRTC_PATH)
 
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
 
 from unitree_webrtc_connect.webrtc_driver import (
@@ -26,6 +29,7 @@ from unitree_webrtc_connect.webrtc_driver import (
     WebRTCConnectionMethod,
 )
 from unitree_webrtc_connect.webrtc_audiohub import WebRTCAudioHub
+from unitree_webrtc_connect.constants import AUDIO_API
 from pydub import AudioSegment
 
 # Default robot IP
@@ -50,79 +54,126 @@ class RobotPlayer:
         self.connected = True
         logger.info("WebRTC ready")
 
-    async def find_uuid(self, name: str) -> Optional[str]:
-        """Find audio UUID by name (matches example pattern from go2_webrtc)"""
+    async def get_audio_list(self) -> list:
+        """Get the list of audio files on the robot"""
         try:
             response = await self.audio_hub.get_audio_list()
             if response and isinstance(response, dict):
-                # Extract nested data structure (response.data.data)
                 data_obj = response.get('data', {})
                 if isinstance(data_obj, dict):
                     data_str = data_obj.get('data', '{}')
                 else:
                     data_str = str(data_obj)
-                
-                audio_list = json.loads(data_str).get('audio_list', [])
-                logger.debug(f"Audio list has {len(audio_list)} items, looking for: {name}")
-                
-                for audio in audio_list:
-                    custom_name = audio.get('CUSTOM_NAME', '')
-                    # Try exact match first, then partial match
-                    if custom_name == name or name in custom_name:
-                        logger.info(f"Found audio: {custom_name} -> {audio['UNIQUE_ID']}")
-                        return audio['UNIQUE_ID']
-                
-                # Log available names for debugging
-                if audio_list:
-                    names = [a.get('CUSTOM_NAME', 'unknown') for a in audio_list[-5:]]
-                    logger.debug(f"Recent audio names: {names}")
+                return json.loads(data_str).get('audio_list', [])
+        except Exception as e:
+            logger.error(f"Error getting audio list: {e}")
+        return []
+
+    async def find_uuid(self, name: str) -> Optional[str]:
+        """Find audio UUID by name"""
+        try:
+            audio_list = await self.get_audio_list()
+            for audio in audio_list:
+                if audio.get('CUSTOM_NAME') == name:
+                    return audio['UNIQUE_ID']
         except Exception as e:
             logger.error(f"Error finding UUID: {e}")
         return None
 
+    async def fast_upload(self, wav_path: str, file_name: str) -> bool:
+        """
+        Optimized upload with larger chunks and minimal delays.
+        Uses 8KB chunks instead of 4KB for faster transfer.
+        """
+        try:
+            with open(wav_path, 'rb') as f:
+                audio_data = f.read()
+
+            file_md5 = hashlib.md5(audio_data).hexdigest()
+            b64_data = base64.b64encode(audio_data).decode('utf-8')
+            
+            # Use larger chunks (8KB) for faster upload
+            chunk_size = 8192
+            chunks = [b64_data[i:i + chunk_size] for i in range(0, len(b64_data), chunk_size)]
+            total_chunks = len(chunks)
+            
+            logger.info(f"Uploading {file_name} ({len(audio_data)} bytes, {total_chunks} chunks)")
+
+            for i, chunk in enumerate(chunks, 1):
+                parameter = {
+                    'file_name': file_name,
+                    'file_type': 'wav',
+                    'file_size': len(audio_data),
+                    'current_block_index': i,
+                    'total_block_number': total_chunks,
+                    'block_content': chunk,
+                    'current_block_size': len(chunk),
+                    'file_md5': file_md5,
+                    'create_time': int(time.time() * 1000)
+                }
+                
+                await self.audio_hub.data_channel.pub_sub.publish_request_new(
+                    "rt/api/audiohub/request",
+                    {
+                        "api_id": AUDIO_API['UPLOAD_AUDIO_FILE'],
+                        "parameter": json.dumps(parameter, ensure_ascii=True)
+                    }
+                )
+                
+                # Minimal delay - just enough for the robot to process
+                if i % 10 == 0:
+                    await asyncio.sleep(0.02)
+
+            logger.info("Upload complete")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Upload error: {e}")
+            return False
+
     async def play(self, wav_path: str) -> bool:
-        logger.info(f"Playing: {wav_path}")
-        
         if not os.path.exists(wav_path):
             logger.error(f"File not found: {wav_path}")
             return False
 
         try:
-            file_size = os.path.getsize(wav_path)
-            logger.info(f"File size: {file_size} bytes")
             audio = AudioSegment.from_wav(wav_path)
             duration = len(audio) / 1000.0
-            logger.info(f"Duration: {duration:.1f}s")
         except Exception as e:
             logger.error(f"Read error: {e}")
             return False
 
-        # Use filename from path (e.g., M1234567890.wav -> M1234567890)
-        name = os.path.splitext(os.path.basename(wav_path))[0]
+        # Use a short unique name based on file hash (avoids duplicates)
+        with open(wav_path, 'rb') as f:
+            file_hash = hashlib.md5(f.read()).hexdigest()[:8]
+        name = f"tts_{file_hash}"
 
         # Check if already exists
         uuid = await self.find_uuid(name)
         
         if not uuid:
-            # Upload audio file
-            logger.info(f"Uploading audio file: {name}")
-            await self.audio_hub.upload_audio_file(wav_path)
+            # Use optimized fast upload
+            logger.info(f"Uploading: {name} ({duration:.1f}s)")
+            await self.fast_upload(wav_path, name)
             
-            # Wait for upload to complete and retry finding UUID
-            for attempt in range(10):
-                await asyncio.sleep(0.5)
+            # Quick retry to find UUID
+            for _ in range(5):
+                await asyncio.sleep(0.2)
                 uuid = await self.find_uuid(name)
                 if uuid:
-                    logger.info(f"Upload successful on attempt {attempt + 1}")
                     break
             
             if not uuid:
-                logger.error(f"Upload failed - could not find {name} in audio list")
+                logger.error("Upload failed")
                 return False
+        else:
+            logger.info(f"Using cached: {name}")
 
-        logger.info(f"Playing audio ({duration:.1f}s) with UUID: {uuid}")
+        logger.info(f"Playing ({duration:.1f}s)")
         await self.audio_hub.play_by_uuid(uuid)
-        await asyncio.sleep(max(0.5, duration - 0.3))
+        
+        # Wait for audio to finish
+        await asyncio.sleep(duration + 0.2)
         return True
 
 
