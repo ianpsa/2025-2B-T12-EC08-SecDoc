@@ -1,7 +1,7 @@
 use futures_util::StreamExt;
 use serde::Deserialize;
 use tokio::sync::mpsc;
-use tokio_tungstenite::connect_async;
+use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{error, info, warn};
 use url::Url;
 
@@ -38,7 +38,7 @@ pub async fn connect_and_receive(
 
                 while let Some(msg) = read.next().await {
                     match msg {
-                        Ok(tungstenite::Message::Text(text)) => {
+                        Ok(Message::Text(text)) => {
                             if let Ok(audio_msg) = serde_json::from_str::<AudioMessage>(&text) {
                                 info!(" Received audio ({} format)", audio_msg.format);
                                 if tx.send(audio_msg).await.is_err() {

@@ -9,7 +9,9 @@ pub struct AudioProcessor {
 
 impl AudioProcessor {
     pub fn new() -> std::io::Result<Self> {
-        let temp_dir = tempfile::tempdir()?.into_path();
+        let temp = tempfile::tempdir()?;
+        let temp_dir = temp.path().to_path_buf();
+        std::mem::forget(temp); // Prevent automatic cleanup
         info!("Temp directory: {:?}", temp_dir);
         Ok(Self { temp_dir })
     }
@@ -77,4 +79,5 @@ impl Drop for AudioProcessor {
         let _ = std::fs::remove_dir_all(&self.temp_dir);
     }
 }
+
 
