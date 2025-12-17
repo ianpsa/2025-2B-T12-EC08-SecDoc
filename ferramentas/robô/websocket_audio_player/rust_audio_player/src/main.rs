@@ -50,19 +50,17 @@ async fn main() {
 
     info!("Waiting for audio...");
 
+    // Process audio messages sequentially (one at a time)
     while let Some(msg) = rx.recv().await {
-        let processor = Arc::clone(&audio_processor);
-        let player = Arc::clone(&robot_player);
-
-        tokio::spawn(async move {
-            if let Some(wav_path) = processor.decode_and_convert(&msg.audio, &msg.format).await {
-                if wav_path.exists() {
-                    player.play_audio(&wav_path).await;
-                    processor.cleanup(&wav_path).await;
-                } else {
-                    error!("WAV file missing: {:?}", wav_path);
-                }
+        info!("Received audio message");
+        
+        if let Some(wav_path) = audio_processor.decode_and_convert(&msg.audio, &msg.format).await {
+            if wav_path.exists() {
+                robot_player.play_audio(&wav_path).await;
+                audio_processor.cleanup(&wav_path).await;
+            } else {
+                error!("WAV file missing: {:?}", wav_path);
             }
-        });
+        }
     }
 }

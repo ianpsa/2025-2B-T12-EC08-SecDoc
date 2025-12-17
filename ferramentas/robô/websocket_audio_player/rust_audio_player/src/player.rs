@@ -84,7 +84,13 @@ impl RobotPlayer {
             None => return false,
         };
 
-        info!("Sending: {}", wav_path.file_name().unwrap_or_default().to_string_lossy());
+        info!("Playing: {}", wav_path.file_name().unwrap_or_default().to_string_lossy());
+
+        // Drain any stale DONE messages before sending new command
+        {
+            let mut rx = self.done_rx.lock().await;
+            while rx.try_recv().is_ok() {}
+        }
 
         let mut stdin_guard = self.stdin.lock().await;
         if let Some(ref mut stdin) = *stdin_guard {
