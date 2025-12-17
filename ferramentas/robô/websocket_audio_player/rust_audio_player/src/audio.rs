@@ -38,13 +38,13 @@ impl AudioProcessor {
             return None;
         }
 
-        // Convert to WAV using ffmpeg (16kHz, mono, 16-bit)
+        // Convert to WAV using ffmpeg (44.1kHz, stereo, 16-bit - compatible with Unitree GO2)
         let status = Command::new("ffmpeg")
             .args([
                 "-y",
                 "-i", input_path.to_str().unwrap(),
-                "-ar", "16000",
-                "-ac", "1",
+                "-ar", "44100",
+                "-ac", "2",
                 "-sample_fmt", "s16",
                 "-f", "wav",
                 output_path.to_str().unwrap(),

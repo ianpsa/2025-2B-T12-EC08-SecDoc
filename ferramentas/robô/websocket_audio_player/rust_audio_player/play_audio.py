@@ -2,7 +2,7 @@
 """
 Persistent WebRTC audio player.
 Maintains connection to robot and plays WAV files received via stdin.
-Usage: python3 play_audio.py <robot_ip>
+Usage: python3 play_audio.py [robot_ip]
 Send file paths via stdin (one per line).
 """
 import asyncio
@@ -11,6 +11,12 @@ import sys
 import os
 import logging
 from typing import Optional
+
+# Add go2_webrtc to path for unitree modules
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+GO2_WEBRTC_PATH = os.path.join(SCRIPT_DIR, "..", "go2_webrtc")
+if os.path.exists(GO2_WEBRTC_PATH):
+    sys.path.insert(0, GO2_WEBRTC_PATH)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
@@ -21,6 +27,9 @@ from unitree_webrtc_connect.webrtc_driver import (
 )
 from unitree_webrtc_connect.webrtc_audiohub import WebRTCAudioHub
 from pydub import AudioSegment
+
+# Default robot IP
+DEFAULT_ROBOT_IP = "192.168.123.161"
 
 
 class RobotPlayer:
@@ -99,11 +108,10 @@ class RobotPlayer:
 
 
 async def main():
-    if len(sys.argv) < 2:
-        print(f"Usage: {sys.argv[0]} <robot_ip>", file=sys.stderr)
-        sys.exit(1)
-
-    player = RobotPlayer(sys.argv[1])
+    robot_ip = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_ROBOT_IP
+    logger.info(f"Using robot IP: {robot_ip}")
+    
+    player = RobotPlayer(robot_ip)
     await player.connect()
 
     print("READY", flush=True)
