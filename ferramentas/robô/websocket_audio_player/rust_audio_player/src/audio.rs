@@ -17,13 +17,14 @@ impl AudioProcessor {
     }
 
     pub async fn decode_and_convert(&self, audio_b64: &str, format: &str) -> Option<PathBuf> {
+        // Use shorter timestamp (milliseconds) for better compatibility
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_nanos();
+            .as_millis() % 1_000_000_000; // Keep last 9 digits
 
-        let input_path = self.temp_dir.join(format!("A{}.{}", timestamp, format));
-        let output_path = self.temp_dir.join(format!("A{}.wav", timestamp));
+        let input_path = self.temp_dir.join(format!("audio_{}.{}", timestamp, format));
+        let output_path = self.temp_dir.join(format!("audio_{}.wav", timestamp));
 
         let audio_bytes = match base64::engine::general_purpose::STANDARD.decode(audio_b64) {
             Ok(bytes) => bytes,

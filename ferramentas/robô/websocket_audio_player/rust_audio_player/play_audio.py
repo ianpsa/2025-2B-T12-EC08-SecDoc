@@ -18,7 +18,7 @@ GO2_WEBRTC_PATH = os.path.join(SCRIPT_DIR, "..", "go2_webrtc")
 if os.path.exists(GO2_WEBRTC_PATH):
     sys.path.insert(0, GO2_WEBRTC_PATH)
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%H:%M:%S')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
 
 from unitree_webrtc_connect.webrtc_driver import (
@@ -51,18 +51,33 @@ class RobotPlayer:
         logger.info("WebRTC ready")
 
     async def find_uuid(self, name: str) -> Optional[str]:
+        """Find audio UUID by name (matches example pattern from go2_webrtc)"""
         try:
             response = await self.audio_hub.get_audio_list()
-            if response:
-                data = response if isinstance(response, dict) else json.loads(response)
-                inner = data.get("data", {})
-                if isinstance(inner, str):
-                    inner = json.loads(inner)
-                for audio in inner.get("audio_list", []):
-                    if name in audio["CUSTOM_NAME"]:
-                        return audio["UNIQUE_ID"]
-        except Exception:
-            pass
+            if response and isinstance(response, dict):
+                # Extract nested data structure (response.data.data)
+                data_obj = response.get('data', {})
+                if isinstance(data_obj, dict):
+                    data_str = data_obj.get('data', '{}')
+                else:
+                    data_str = str(data_obj)
+                
+                audio_list = json.loads(data_str).get('audio_list', [])
+                logger.debug(f"Audio list has {len(audio_list)} items, looking for: {name}")
+                
+                for audio in audio_list:
+                    custom_name = audio.get('CUSTOM_NAME', '')
+                    # Try exact match first, then partial match
+                    if custom_name == name or name in custom_name:
+                        logger.info(f"Found audio: {custom_name} -> {audio['UNIQUE_ID']}")
+                        return audio['UNIQUE_ID']
+                
+                # Log available names for debugging
+                if audio_list:
+                    names = [a.get('CUSTOM_NAME', 'unknown') for a in audio_list[-5:]]
+                    logger.debug(f"Recent audio names: {names}")
+        except Exception as e:
+            logger.error(f"Error finding UUID: {e}")
         return None
 
     async def play(self, wav_path: str) -> bool:
@@ -89,22 +104,26 @@ class RobotPlayer:
         uuid = await self.find_uuid(name)
         
         if not uuid:
-            # Upload
+            # Upload audio file
+            logger.info(f"Uploading audio file: {name}")
             await self.audio_hub.upload_audio_file(wav_path)
-            for _ in range(6):
-                await asyncio.sleep(0.2)
+            
+            # Wait for upload to complete and retry finding UUID
+            for attempt in range(10):
+                await asyncio.sleep(0.5)
                 uuid = await self.find_uuid(name)
                 if uuid:
+                    logger.info(f"Upload successful on attempt {attempt + 1}")
                     break
+            
+            if not uuid:
+                logger.error(f"Upload failed - could not find {name} in audio list")
+                return False
 
-        if uuid:
-            logger.info(f"Playing ({duration:.1f}s)")
-            await self.audio_hub.play_by_uuid(uuid)
-            await asyncio.sleep(max(0, duration - 0.3))
-            return True
-        else:
-            logger.error("Upload failed")
-            return False
+        logger.info(f"Playing audio ({duration:.1f}s) with UUID: {uuid}")
+        await self.audio_hub.play_by_uuid(uuid)
+        await asyncio.sleep(max(0.5, duration - 0.3))
+        return True
 
 
 async def main():
