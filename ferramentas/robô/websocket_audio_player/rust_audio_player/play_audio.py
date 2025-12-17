@@ -51,6 +51,11 @@ class RobotPlayer:
         await self.webrtc_conn.connect()
         self.audio_hub = WebRTCAudioHub(self.webrtc_conn, logger)
         await asyncio.sleep(2.0)
+        
+        # Set play mode to "no_cycle" (play once, don't repeat)
+        await self.audio_hub.set_play_mode("no_cycle")
+        logger.info("Play mode set to: no_cycle")
+        
         self.connected = True
         logger.info("WebRTC ready")
 
