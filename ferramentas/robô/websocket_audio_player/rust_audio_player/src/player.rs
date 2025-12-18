@@ -3,9 +3,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, Mutex};
-
-use crate::audio::AudioProcessor;
+use tokio::sync::Mutex;
 
 pub struct RobotPlayer {
     _process: Arc<Mutex<Option<Child>>>,
@@ -45,7 +43,6 @@ impl RobotPlayer {
                 if line.trim() == "READY" {
                     *ready_flag.lock().await = true;
                 }
-                // Ignore DONE - we don't wait for it
             }
         });
 
@@ -71,33 +68,5 @@ impl RobotPlayer {
             }
         }
         false
-    }
-}
-
-/// Continuous streaming - sends all chunks without waiting
-pub async fn stream_continuous(
-    player: Arc<RobotPlayer>,
-    mut wav_rx: mpsc::Receiver<PathBuf>,
-    processor: Arc<AudioProcessor>,
-) {
-    let mut files_to_cleanup: Vec<PathBuf> = Vec::new();
-    
-    while let Some(wav_path) = wav_rx.recv().await {
-        // Send immediately - don't wait
-        player.send_audio(&wav_path).await;
-        files_to_cleanup.push(wav_path);
-        
-        // Cleanup old files (keep last 5)
-        while files_to_cleanup.len() > 5 {
-            if let Some(old) = files_to_cleanup.first() {
-                processor.cleanup(old).await;
-            }
-            files_to_cleanup.remove(0);
-        }
-    }
-    
-    // Final cleanup
-    for f in files_to_cleanup {
-        processor.cleanup(&f).await;
     }
 }
