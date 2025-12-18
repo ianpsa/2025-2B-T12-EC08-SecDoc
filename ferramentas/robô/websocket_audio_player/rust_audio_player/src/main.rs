@@ -11,7 +11,6 @@ use tokio::sync::mpsc;
 async fn main() {
     tracing_subscriber::fmt()
         .with_target(false)
-        .with_thread_ids(false)
         .with_max_level(tracing::Level::ERROR)
         .init();
 
@@ -41,32 +40,31 @@ async fn main() {
         }
     };
 
-    // Channel for receiving audio from websocket
-    let (ws_tx, mut ws_rx) = mpsc::channel::<websocket::AudioMessage>(128);
-    
-    // Channel for sending processed WAV paths to player
-    let (wav_tx, wav_rx) = mpsc::channel::<PathBuf>(32);
+    let (ws_tx, mut ws_rx) = mpsc::channel::<websocket::AudioMessage>(256);
+    let (wav_tx, wav_rx) = mpsc::channel::<PathBuf>(64);
 
-    // WebSocket receiver task
+    // WebSocket receiver
     let ws_url = config.websocket_url.clone();
     tokio::spawn(async move {
         websocket::connect_and_receive(&ws_url, ws_tx).await;
     });
 
-    // Audio processing task - converts chunks in background
+    // Fast audio processor - multiple workers
     let processor = Arc::clone(&audio_processor);
-    let wav_sender = wav_tx.clone();
+    let wav_sender = wav_tx;
     tokio::spawn(async move {
         while let Some(msg) = ws_rx.recv().await {
-            if let Some(wav_path) = processor.decode_and_convert(&msg.audio, &msg.format).await {
-                if wav_sender.send(wav_path).await.is_err() {
-                    break;
+            let proc = Arc::clone(&processor);
+            let sender = wav_sender.clone();
+            // Process each chunk in parallel
+            tokio::spawn(async move {
+                if let Some(wav_path) = proc.decode_and_convert(&msg.audio, &msg.format).await {
+                    let _ = sender.send(wav_path).await;
                 }
-            }
+            });
         }
     });
 
-
-    // Player task - plays chunks as they become ready (no waiting between)
-    player::play_continuous(robot_player, wav_rx, audio_processor).await;
+    // Continuous streamer - no waiting between chunks
+    player::stream_continuous(robot_player, wav_rx, audio_processor).await;
 }

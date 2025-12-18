@@ -23,40 +23,31 @@ impl AudioProcessor {
         self.counter.fetch_add(1, Ordering::SeqCst)
     }
 
-    /// Decode base64 and convert to WAV optimized for robot
     pub async fn decode_and_convert(&self, audio_b64: &str, format: &str) -> Option<PathBuf> {
         let id = self.next_id();
-        let input_path = self.temp_dir.join(format!("in_{}.{}", id, format));
-        let output_path = self.temp_dir.join(format!("out_{}.wav", id));
+        let input_path = self.temp_dir.join(format!("i{}.{}", id, format));
+        let output_path = self.temp_dir.join(format!("o{}.wav", id));
 
-        // Decode base64
         let audio_bytes = base64::engine::general_purpose::STANDARD.decode(audio_b64).ok()?;
-
-        // Write input file
         tokio::fs::write(&input_path, &audio_bytes).await.ok()?;
 
-        // Convert to WAV with robot-optimal settings (16kHz mono)
-        // Using faster conversion settings
+        // Ultra-fast conversion
         let status = Command::new("ffmpeg")
             .args([
-                "-y",
-                "-i", input_path.to_str().unwrap(),
-                "-ar", "16000",      // 16kHz for robot
-                "-ac", "1",          // Mono
-                "-sample_fmt", "s16",
-                "-f", "wav",
-                output_path.to_str().unwrap(),
+                "-y", "-hide_banner", "-loglevel", "error",
+                "-i", input_path.to_str()?,
+                "-ar", "16000", "-ac", "1", "-f", "wav",
+                output_path.to_str()?,
             ])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
             .await;
 
-        // Cleanup input immediately
         let _ = tokio::fs::remove_file(&input_path).await;
 
         match status {
-            Ok(s) if s.success() && output_path.exists() => Some(output_path),
+            Ok(s) if s.success() => Some(output_path),
             _ => None,
         }
     }
