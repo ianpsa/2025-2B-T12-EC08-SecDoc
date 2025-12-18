@@ -32,13 +32,20 @@ struct AppState {
     processor: Arc<AudioProcessor>,
     audio_dir: PathBuf,
     checkpoints: Arc<Checkpoints>,
-    playing: Arc<Mutex<bool>>,
+    playing: Arc<Mutex<Option<String>>>, // Current checkpoint being played
 }
 
 #[derive(Serialize)]
 struct Response {
     status: String,
     message: String,
+}
+
+#[derive(Serialize)]
+struct StatusResponse {
+    status: String,
+    playing: Option<String>,
+    checkpoints: HashMap<String, usize>,
 }
 
 pub async fn start_server(
@@ -52,6 +59,8 @@ pub async fn start_server(
         .unwrap_or_default()
         .join("checkpoints.json");
     
+    println!("📂 Loading checkpoints from: {:?}", checkpoints_path);
+    
     let checkpoints: Checkpoints = match std::fs::read_to_string(&checkpoints_path) {
         Ok(content) => serde_json::from_str(&content).unwrap_or_else(|e| {
             eprintln!("❌ Failed to parse checkpoints.json: {}", e);
@@ -61,7 +70,6 @@ pub async fn start_server(
         }),
         Err(e) => {
             eprintln!("❌ Failed to read checkpoints.json: {}", e);
-            eprintln!("   Looking in: {:?}", checkpoints_path);
             Checkpoints {
                 checkpoints: HashMap::new(),
             }
@@ -72,13 +80,15 @@ pub async fn start_server(
     for (name, items) in &checkpoints.checkpoints {
         println!("   {} -> {} audios", name, items.len());
     }
+    
+    println!("📂 Audio directory: {:?}", audio_dir);
 
     let state = AppState {
         player,
         processor,
         audio_dir,
         checkpoints: Arc::new(checkpoints),
-        playing: Arc::new(Mutex::new(false)),
+        playing: Arc::new(Mutex::new(None)),
     };
 
     let cors = CorsLayer::new()
@@ -88,6 +98,7 @@ pub async fn start_server(
 
     let app = Router::new()
         .route("/", get(index))
+        .route("/status", get(status))
         .route("/checkpoints", get(list_checkpoints))
         .route("/:checkpoint", post(play_checkpoint))
         .route("/stop", post(stop_playback))
@@ -95,7 +106,7 @@ pub async fn start_server(
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", port);
-    println!("🚀 HTTP server starting on {}", addr);
+    println!("🚀 HTTP server ready on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
@@ -104,7 +115,20 @@ pub async fn start_server(
 async fn index() -> Json<Response> {
     Json(Response {
         status: "ok".to_string(),
-        message: "Audio Player API. POST /{checkpoint_name} to play.".to_string(),
+        message: "Audio Player API. POST /:checkpoint to play, GET /status for info".to_string(),
+    })
+}
+
+async fn status(State(state): State<AppState>) -> Json<StatusResponse> {
+    let playing = state.playing.lock().await.clone();
+    let mut checkpoints = HashMap::new();
+    for (name, items) in &state.checkpoints.checkpoints {
+        checkpoints.insert(name.clone(), items.len());
+    }
+    Json(StatusResponse {
+        status: "ok".to_string(),
+        playing,
+        checkpoints,
     })
 }
 
@@ -120,15 +144,17 @@ async fn play_checkpoint(
     State(state): State<AppState>,
     Path(checkpoint): Path<String>,
 ) -> Result<Json<Response>, (StatusCode, Json<Response>)> {
+    println!("\n📥 Received request for checkpoint: {}", checkpoint);
+    
     // Check if already playing
     {
         let playing = state.playing.lock().await;
-        if *playing {
+        if playing.is_some() {
             return Err((
                 StatusCode::CONFLICT,
                 Json(Response {
                     status: "error".to_string(),
-                    message: "Already playing audio".to_string(),
+                    message: format!("Already playing: {}", playing.as_ref().unwrap()),
                 }),
             ));
         }
@@ -138,84 +164,120 @@ async fn play_checkpoint(
     let audio_list = match state.checkpoints.checkpoints.get(&checkpoint) {
         Some(list) => list.clone(),
         None => {
+            println!("❌ Checkpoint not found: {}", checkpoint);
             return Err((
                 StatusCode::NOT_FOUND,
                 Json(Response {
                     status: "error".to_string(),
-                    message: format!("Checkpoint '{}' not found", checkpoint),
+                    message: format!("Checkpoint '{}' not found. Available: {:?}", 
+                        checkpoint, 
+                        state.checkpoints.checkpoints.keys().collect::<Vec<_>>()),
                 }),
             ));
         }
     };
 
-    println!("\n🎵 Playing checkpoint: {} ({} audios)", checkpoint, audio_list.len());
+    println!("🎵 Starting checkpoint: {} ({} audios)", checkpoint, audio_list.len());
 
     // Mark as playing
     {
         let mut playing = state.playing.lock().await;
-        *playing = true;
+        *playing = Some(checkpoint.clone());
     }
 
-    // Play each audio in order
+    // Play in background and return immediately
+    let state_clone = state.clone();
+    let checkpoint_clone = checkpoint.clone();
+    
+    tokio::spawn(async move {
+        play_audio_list(state_clone, checkpoint_clone, audio_list).await;
+    });
+
+    Ok(Json(Response {
+        status: "started".to_string(),
+        message: format!("Playing checkpoint: {}", checkpoint),
+    }))
+}
+
+async fn play_audio_list(state: AppState, checkpoint: String, audio_list: Vec<AudioItem>) {
     let mut played = 0;
-    let mut errors = Vec::new();
+    let total = audio_list.len();
 
     for item in &audio_list {
         // Check for stop signal
         {
             let playing = state.playing.lock().await;
-            if !*playing {
+            if playing.is_none() {
                 println!("⏹️ Playback stopped");
                 break;
             }
         }
 
-        // Find audio file (try common extensions)
+        // Find audio file
         let audio_path = find_audio_file(&state.audio_dir, &item.id);
         
         match audio_path {
             Some(path) => {
-                println!("   ▶️ Playing: {}", item.id);
+                println!("   ▶️ [{}/{}] Playing: {}", played + 1, total, item.id);
                 
-                // Decode audio to WAV
-                let audio_data = match tokio::fs::read(&path).await {
-                    Ok(data) => data,
-                    Err(e) => {
-                        errors.push(format!("{}: read error - {}", item.id, e));
-                        continue;
+                // Check if already WAV - skip decode
+                let is_wav = path.extension()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.eq_ignore_ascii_case("wav"))
+                    .unwrap_or(false);
+
+                let wav_path = if is_wav {
+                    // Already WAV, use directly
+                    path.clone()
+                } else {
+                    // Need to decode
+                    let audio_data = match tokio::fs::read(&path).await {
+                        Ok(data) => data,
+                        Err(e) => {
+                            println!("   ❌ Read error: {} - {}", item.id, e);
+                            continue;
+                        }
+                    };
+
+                    let format = path.extension()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("mp3");
+
+                    let b64 = base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        &audio_data,
+                    );
+
+                    match state.processor.decode(&b64, format).await {
+                        Some(p) => p,
+                        None => {
+                            println!("   ❌ Decode failed: {}", item.id);
+                            continue;
+                        }
                     }
                 };
 
-                let format = path.extension()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("mp3");
-
-                let b64 = base64::Engine::encode(
-                    &base64::engine::general_purpose::STANDARD,
-                    &audio_data,
-                );
-
-                if let Some(wav_path) = state.processor.decode(&b64, format).await {
-                    // Send to robot and wait for completion
-                    state.player.send_audio(&wav_path).await;
-                    
-                    // Wait for playback signal (DONE from Python script)
-                    // The player.send_audio already waits for DONE
-                    
+                // Send to robot
+                let success = state.player.send_audio(&wav_path).await;
+                
+                if success {
                     played += 1;
+                    println!("   ✅ Done: {}", item.id);
+                } else {
+                    println!("   ⚠️ Player returned false: {}", item.id);
+                }
 
-                    // Cleanup
+                // Cleanup decoded file (not original)
+                if !is_wav {
                     let proc = state.processor.clone();
+                    let wav_clone = wav_path.clone();
                     tokio::spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                        proc.cleanup(&wav_path);
+                        proc.cleanup(&wav_clone);
                     });
-                } else {
-                    errors.push(format!("{}: decode failed", item.id));
                 }
             }
             None => {
-                errors.push(format!("{}: file not found", item.id));
                 println!("   ⚠️ Not found: {}", item.id);
             }
         }
@@ -224,40 +286,27 @@ async fn play_checkpoint(
     // Mark as not playing
     {
         let mut playing = state.playing.lock().await;
-        *playing = false;
+        *playing = None;
     }
 
-    println!("✅ Checkpoint {} complete: {}/{} played", checkpoint, played, audio_list.len());
-
-    if errors.is_empty() {
-        Ok(Json(Response {
-            status: "success".to_string(),
-            message: format!("Played {} audios from {}", played, checkpoint),
-        }))
-    } else {
-        Ok(Json(Response {
-            status: "success".to_string(),
-            message: format!(
-                "Played {}/{} audios. Errors: {}",
-                played,
-                audio_list.len(),
-                errors.join(", ")
-            ),
-        }))
-    }
+    println!("✅ Checkpoint {} complete: {}/{} played", checkpoint, played, total);
 }
 
 async fn stop_playback(State(state): State<AppState>) -> Json<Response> {
     let mut playing = state.playing.lock().await;
-    *playing = false;
+    let was_playing = playing.take();
     Json(Response {
         status: "success".to_string(),
-        message: "Playback stopped".to_string(),
+        message: match was_playing {
+            Some(cp) => format!("Stopped: {}", cp),
+            None => "Nothing was playing".to_string(),
+        },
     })
 }
 
 fn find_audio_file(audio_dir: &PathBuf, id: &str) -> Option<PathBuf> {
-    let extensions = ["mp3", "wav", "ogg", "m4a", "flac"];
+    // First try WAV (preferred - no decode needed)
+    let extensions = ["wav", "mp3", "ogg", "m4a", "flac"];
     
     for ext in &extensions {
         let path = audio_dir.join(format!("{}.{}", id, ext));
@@ -266,7 +315,7 @@ fn find_audio_file(audio_dir: &PathBuf, id: &str) -> Option<PathBuf> {
         }
     }
     
-    // Also try without extension (if id already has extension)
+    // Try without extension
     let path = audio_dir.join(id);
     if path.exists() {
         return Some(path);
@@ -274,4 +323,3 @@ fn find_audio_file(audio_dir: &PathBuf, id: &str) -> Option<PathBuf> {
 
     None
 }
-
