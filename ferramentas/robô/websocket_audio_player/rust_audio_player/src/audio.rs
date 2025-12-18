@@ -5,7 +5,8 @@ use tokio::sync::mpsc;
 use tracing::{error, info};
 
 /// Size of audio chunks for streaming (in bytes of decoded audio)
-const CHUNK_DURATION_MS: u64 = 500; // 500ms chunks
+/// 2 seconds per chunk = good balance between latency and overhead
+const CHUNK_DURATION_MS: u64 = 2000; // 2 second chunks
 const SAMPLE_RATE: u64 = 44100;
 const CHANNELS: u64 = 2;
 const BYTES_PER_SAMPLE: u64 = 2;

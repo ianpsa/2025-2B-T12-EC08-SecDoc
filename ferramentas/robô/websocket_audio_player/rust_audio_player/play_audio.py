@@ -77,14 +77,23 @@ class StreamingPlayer:
         Stream a single WAV chunk to the robot.
         The chunk plays immediately in megaphone mode.
         """
+        # Clean up path (remove any whitespace)
+        wav_path = wav_path.strip()
+        
         if not os.path.exists(wav_path):
-            logger.error(f"Chunk not found: {wav_path}")
+            logger.error(f"File not found: {wav_path}")
             return
 
         try:
             # Read and encode chunk
             with open(wav_path, 'rb') as f:
                 audio_data = f.read()
+            
+            if len(audio_data) == 0:
+                logger.warning(f"Empty chunk: {wav_path}")
+                return
+                
+            self.chunk_index += 1
             
             b64_data = base64.b64encode(audio_data).decode('utf-8')
             
@@ -95,7 +104,6 @@ class StreamingPlayer:
 
             # Send all pieces of this chunk
             for i, piece in enumerate(pieces, 1):
-                self.chunk_index += 1
                 parameter = {
                     'current_block_size': len(piece),
                     'block_content': piece,
@@ -137,16 +145,24 @@ async def main():
             
             cmd = line.decode().strip()
             
+            if not cmd:
+                continue
+            
             if cmd == "START":
                 await player.start_streaming()
-            
-            elif cmd.startswith("CHUNK:"):
-                chunk_path = cmd[6:]  # Remove "CHUNK:" prefix
-                await player.stream_chunk(chunk_path)
-            
             elif cmd == "STOP":
                 await player.stop_streaming()
                 print("DONE", flush=True)
+            elif ":" in cmd:
+                # Parse CHUNK:/path/to/file.wav
+                parts = cmd.split(":", 1)
+                if len(parts) == 2 and parts[0] == "CHUNK":
+                    chunk_path = parts[1]
+                    await player.stream_chunk(chunk_path)
+                else:
+                    logger.warning(f"Unknown command: {cmd}")
+            else:
+                logger.warning(f"Unknown command: {cmd}")
             
         except Exception as e:
             logger.error(f"Error: {e}")

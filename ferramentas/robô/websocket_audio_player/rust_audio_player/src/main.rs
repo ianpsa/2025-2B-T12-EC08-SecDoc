@@ -66,19 +66,28 @@ async fn main() {
         // Start megaphone mode for streaming
         robot_player.start_streaming().await;
 
-        // Convert to chunks and stream them as they're ready
+        // Collect all chunks first, then stream them
         let mut chunk_rx = audio_processor.convert_to_streaming_chunks(&input_path).await;
-        let mut chunk_count = 0;
+        let mut chunks: Vec<PathBuf> = Vec::new();
 
+        // Wait for all chunks to be ready
         while let Some(chunk_path) = chunk_rx.recv().await {
-            chunk_count += 1;
-            // Stream each chunk as it becomes available
-            robot_player.stream_chunk(&chunk_path).await;
-            audio_processor.cleanup(&chunk_path).await;
+            chunks.push(chunk_path);
+        }
+
+        info!("Streaming {} chunks", chunks.len());
+
+        // Now stream all chunks
+        for chunk_path in &chunks {
+            robot_player.stream_chunk(chunk_path).await;
         }
 
         // End streaming
         robot_player.stop_streaming().await;
-        info!("Streamed {} chunks", chunk_count);
+
+        // Cleanup after streaming is done
+        for chunk_path in chunks {
+            audio_processor.cleanup(&chunk_path).await;
+        }
     }
 }
