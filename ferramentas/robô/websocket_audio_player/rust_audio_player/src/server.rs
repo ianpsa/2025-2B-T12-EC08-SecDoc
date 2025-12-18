@@ -185,23 +185,32 @@ async fn play_checkpoint(
         *playing = Some(checkpoint.clone());
     }
 
-    // Play in background and return immediately
-    let state_clone = state.clone();
-    let checkpoint_clone = checkpoint.clone();
-    
-    tokio::spawn(async move {
-        play_audio_list(state_clone, checkpoint_clone, audio_list).await;
-    });
+    // Play all audios and wait for completion
+    let (played, total, errors) = play_audio_list(state.clone(), checkpoint.clone(), audio_list).await;
 
-    Ok(Json(Response {
-        status: "started".to_string(),
-        message: format!("Playing checkpoint: {}", checkpoint),
-    }))
+    // Mark as not playing
+    {
+        let mut playing = state.playing.lock().await;
+        *playing = None;
+    }
+
+    if errors.is_empty() {
+        Ok(Json(Response {
+            status: "success".to_string(),
+            message: format!("Played {}/{} audios from {}", played, total, checkpoint),
+        }))
+    } else {
+        Ok(Json(Response {
+            status: "success".to_string(),
+            message: format!("Played {}/{}. Errors: {}", played, total, errors.join(", ")),
+        }))
+    }
 }
 
-async fn play_audio_list(state: AppState, checkpoint: String, audio_list: Vec<AudioItem>) {
+async fn play_audio_list(state: AppState, checkpoint: String, audio_list: Vec<AudioItem>) -> (usize, usize, Vec<String>) {
     let mut played = 0;
     let total = audio_list.len();
+    let mut errors = Vec::new();
 
     for item in &audio_list {
         // Check for stop signal
@@ -234,7 +243,9 @@ async fn play_audio_list(state: AppState, checkpoint: String, audio_list: Vec<Au
                     let audio_data = match tokio::fs::read(&path).await {
                         Ok(data) => data,
                         Err(e) => {
-                            println!("   ❌ Read error: {} - {}", item.id, e);
+                            let err = format!("{}: read error - {}", item.id, e);
+                            println!("   ❌ {}", err);
+                            errors.push(err);
                             continue;
                         }
                     };
@@ -251,20 +262,24 @@ async fn play_audio_list(state: AppState, checkpoint: String, audio_list: Vec<Au
                     match state.processor.decode(&b64, format).await {
                         Some(p) => p,
                         None => {
-                            println!("   ❌ Decode failed: {}", item.id);
+                            let err = format!("{}: decode failed", item.id);
+                            println!("   ❌ {}", err);
+                            errors.push(err);
                             continue;
                         }
                     }
                 };
 
-                // Send to robot
+                // Send to robot and wait
                 let success = state.player.send_audio(&wav_path).await;
                 
                 if success {
                     played += 1;
                     println!("   ✅ Done: {}", item.id);
                 } else {
-                    println!("   ⚠️ Player returned false: {}", item.id);
+                    let err = format!("{}: playback failed", item.id);
+                    println!("   ⚠️ {}", err);
+                    errors.push(err);
                 }
 
                 // Cleanup decoded file (not original)
@@ -278,18 +293,15 @@ async fn play_audio_list(state: AppState, checkpoint: String, audio_list: Vec<Au
                 }
             }
             None => {
-                println!("   ⚠️ Not found: {}", item.id);
+                let err = format!("{}: file not found", item.id);
+                println!("   ⚠️ {}", err);
+                errors.push(err);
             }
         }
     }
 
-    // Mark as not playing
-    {
-        let mut playing = state.playing.lock().await;
-        *playing = None;
-    }
-
     println!("✅ Checkpoint {} complete: {}/{} played", checkpoint, played, total);
+    (played, total, errors)
 }
 
 async fn stop_playback(State(state): State<AppState>) -> Json<Response> {
