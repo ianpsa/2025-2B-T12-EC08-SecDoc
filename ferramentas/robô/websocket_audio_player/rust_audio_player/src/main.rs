@@ -1,6 +1,7 @@
 mod audio;
 mod config;
 mod player;
+mod server;
 mod websocket;
 
 use std::path::PathBuf;
@@ -19,6 +20,7 @@ async fn main() {
 
     println!("🤖 Robot IP: {}", config.robot_ip);
     println!("📡 WebSocket: {}", config.websocket_url);
+    println!("🌐 HTTP Server: http://0.0.0.0:{}", config.http_port);
 
     // Initialize audio processor
     let audio_processor = Arc::new(audio::AudioProcessor::new().expect("Failed to create temp dir"));
@@ -39,6 +41,16 @@ async fn main() {
 
     // Channel for WebSocket messages
     let (ws_tx, mut ws_rx) = mpsc::channel::<websocket::AudioData>(8);
+
+    // Start HTTP server for checkpoints
+    let http_player = Arc::clone(&robot_player);
+    let http_processor = Arc::clone(&audio_processor);
+    let audio_dir = config.audio_dir.clone();
+    let http_port = config.http_port;
+    
+    tokio::spawn(async move {
+        server::start_server(http_port, http_player, http_processor, audio_dir).await;
+    });
 
     // WebSocket receiver task
     let ws_url = config.websocket_url.clone();
