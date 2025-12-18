@@ -89,7 +89,7 @@ pub async fn start_server(
     let app = Router::new()
         .route("/", get(index))
         .route("/checkpoints", get(list_checkpoints))
-        .route("/{checkpoint}", post(play_checkpoint))
+        .route("/:checkpoint", post(play_checkpoint))
         .route("/stop", post(stop_playback))
         .layer(cors)
         .with_state(state);
