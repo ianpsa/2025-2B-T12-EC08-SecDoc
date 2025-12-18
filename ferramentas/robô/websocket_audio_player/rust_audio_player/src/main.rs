@@ -6,13 +6,14 @@ mod websocket;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::info;
 
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
         .with_target(false)
         .with_thread_ids(false)
+        .with_max_level(tracing::Level::WARN)  // Only warnings and errors
         .init();
 
     let config = match config::Config::from_args() {
@@ -23,8 +24,8 @@ async fn main() {
         }
     };
 
-    info!("Robot IP: {}", config.robot_ip);
-    info!("WebSocket: {}", config.websocket_url);
+    println!("Robot: {}", config.robot_ip);
+    println!("WebSocket: {}", config.websocket_url);
 
     let audio_processor = Arc::new(
         audio::AudioProcessor::new().expect("Failed to create temp dir")
@@ -36,24 +37,23 @@ async fn main() {
     ).await {
         Some(p) => Arc::new(p),
         None => {
-            error!("Failed to initialize robot player");
+            eprintln!("❌ Failed to initialize robot player");
             std::process::exit(1);
         }
     };
 
-    let (tx, mut rx) = mpsc::channel::<websocket::AudioMessage>(32);
+    // Larger buffer for smoother playback
+    let (tx, mut rx) = mpsc::channel::<websocket::AudioMessage>(64);
 
     let ws_url = config.websocket_url.clone();
     tokio::spawn(async move {
         websocket::connect_and_receive(&ws_url, tx).await;
     });
 
-    info!("Waiting for audio...");
+    println!("🎵 Ready - waiting for audio...\n");
 
-    // Simple: decode, convert, play
+    // Process chunks as they arrive
     while let Some(msg) = rx.recv().await {
-        info!("Received audio");
-        
         if let Some(wav_path) = audio_processor.decode_and_convert(&msg.audio, &msg.format).await {
             robot_player.play_audio(&wav_path).await;
             audio_processor.cleanup(&wav_path).await;

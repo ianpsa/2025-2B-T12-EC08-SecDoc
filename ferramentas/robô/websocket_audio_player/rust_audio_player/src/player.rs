@@ -4,7 +4,6 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, Mutex};
-use tracing::{error, info};
 
 pub struct RobotPlayer {
     _process: Arc<Mutex<Option<Child>>>,
@@ -15,27 +14,19 @@ pub struct RobotPlayer {
 
 impl RobotPlayer {
     pub async fn new(robot_ip: String, script_path: PathBuf) -> Option<Self> {
-        info!("Starting Python player...");
-
-        let mut child = match Command::new("python3")
+        let mut child = Command::new("python3")
             .arg(&script_path)
             .arg(&robot_ip)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::null())  // Suppress stderr
             .spawn()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                error!("Failed to start Python: {}", e);
-                return None;
-            }
-        };
+            .ok()?;
 
         let stdin = child.stdin.take()?;
         let stdout = child.stdout.take()?;
 
-        let (done_tx, done_rx) = mpsc::channel::<()>(32);
+        let (done_tx, done_rx) = mpsc::channel::<()>(64);
 
         let player = Self {
             _process: Arc::new(Mutex::new(Some(child))),
@@ -56,7 +47,6 @@ impl RobotPlayer {
                     Ok(_) => {
                         let msg = line.trim();
                         if msg == "READY" {
-                            info!("Python player ready");
                             *ready_flag.lock().await = true;
                         } else if msg == "DONE" {
                             let _ = done_tx.send(()).await;
@@ -67,14 +57,16 @@ impl RobotPlayer {
             }
         });
 
-        for _ in 0..100 {
+        // Wait for Python to be ready
+        for _ in 0..50 {
             if *player.ready.lock().await {
+                println!("Player ready");
                 return Some(player);
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
 
-        error!("Python player did not become ready");
+        eprintln!("❌ Player timeout");
         None
     }
 
@@ -83,8 +75,6 @@ impl RobotPlayer {
             Some(s) => s,
             None => return false,
         };
-
-        info!("Playing: {}", wav_path.file_name().unwrap_or_default().to_string_lossy());
 
         // Drain stale DONE messages
         {
@@ -98,20 +88,14 @@ impl RobotPlayer {
                 let _ = stdin.flush().await;
                 drop(stdin_guard);
 
-                // Wait for completion
+                // Wait for completion with shorter timeout
                 let mut rx = self.done_rx.lock().await;
                 match tokio::time::timeout(
-                    std::time::Duration::from_secs(60),
+                    std::time::Duration::from_secs(30),
                     rx.recv()
                 ).await {
-                    Ok(Some(())) => {
-                        info!("Playback complete");
-                        return true;
-                    }
-                    _ => {
-                        error!("Timeout");
-                        return false;
-                    }
+                    Ok(Some(())) => return true,
+                    _ => return false,
                 }
             }
         }
