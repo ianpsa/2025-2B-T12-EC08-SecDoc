@@ -3,19 +3,11 @@ mod config;
 mod player;
 mod websocket;
 
-use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::mpsc;
 
-/// Pre-buffer chunks before starting playback
-const PRE_BUFFER_COUNT: usize = 3;
-
-/// Maximum playback buffer size
-const MAX_BUFFER: usize = 32;
-
-#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::main]
 async fn main() {
     let config = match config::Config::from_args() {
         Ok(c) => c,
@@ -27,9 +19,8 @@ async fn main() {
 
     println!("🤖 Robot IP: {}", config.robot_ip);
     println!("📡 WebSocket: {}", config.websocket_url);
-    println!("⚡ Workers: 4 parallel decoders\n");
 
-    // Initialize audio processor with worker pool
+    // Initialize audio processor
     let audio_processor = Arc::new(audio::AudioProcessor::new().expect("Failed to create temp dir"));
 
     // Initialize robot player
@@ -47,10 +38,7 @@ async fn main() {
     };
 
     // Channel for WebSocket messages
-    let (ws_tx, mut ws_rx) = mpsc::channel::<websocket::AudioData>(128);
-
-    // Channel for decoded audio (separate task for decoding)
-    let (decoded_tx, mut decoded_rx) = mpsc::channel::<PathBuf>(64);
+    let (ws_tx, mut ws_rx) = mpsc::channel::<websocket::AudioData>(8);
 
     // WebSocket receiver task
     let ws_url = config.websocket_url.clone();
@@ -58,76 +46,29 @@ async fn main() {
         websocket::connect_and_receive(&ws_url, ws_tx).await;
     });
 
-    // Decoder task - converts websocket data to wav files
-    let proc = Arc::clone(&audio_processor);
-    tokio::spawn(async move {
-        while let Some(data) = ws_rx.recv().await {
-            proc.submit(&data.audio_b64, &data.format);
-            
-            // Continuously drain decoded results
-            while let Some(path) = proc.try_recv_ordered() {
-                if decoded_tx.send(path).await.is_err() {
-                    return;
-                }
-            }
-        }
-    });
+    println!("⏳ Waiting for audio...\n");
 
-    // Playback buffer
-    let mut playback_buffer: VecDeque<PathBuf> = VecDeque::with_capacity(MAX_BUFFER);
-    let mut started = false;
-    let mut chunks_played = 0u64;
+    // Simple loop: receive -> decode -> play
+    while let Some(data) = ws_rx.recv().await {
+        let b64_len = data.audio_b64.len();
+        println!("📥 Received {} KB", b64_len / 1024);
 
-    // Main playback loop
-    loop {
-        // Try to fill buffer from decoded chunks (non-blocking)
-        while playback_buffer.len() < MAX_BUFFER {
-            match decoded_rx.try_recv() {
-                Ok(path) => {
-                    playback_buffer.push_back(path);
-                }
-                Err(_) => break,
-            }
-        }
+        // Decode to WAV
+        if let Some(wav_path) = audio_processor.decode(&data.audio_b64, &data.format).await {
+            println!("🔄 Decoded to WAV");
 
-        // Wait for pre-buffer before starting
-        if !started {
-            if playback_buffer.len() >= PRE_BUFFER_COUNT {
-                started = true;
-                println!("🎵 Starting playback (buffered {} chunks)", playback_buffer.len());
-            } else {
-                // Wait for more data
-                if let Some(path) = decoded_rx.recv().await {
-                    playback_buffer.push_back(path);
-                }
-                continue;
-            }
-        }
+            // Send to robot
+            robot_player.send_audio(&wav_path).await;
+            println!("🎵 Playing!\n");
 
-        // Send ONE chunk to robot
-        if let Some(path) = playback_buffer.pop_front() {
-            robot_player.send_audio(&path).await;
-            chunks_played += 1;
-
-            if chunks_played % 10 == 0 {
-                println!("🎵 Played: {} | Buffer: {}", chunks_played, playback_buffer.len());
-            }
-
-            // Cleanup old file in background
-            let p = Arc::clone(&audio_processor);
+            // Cleanup after 60s
+            let proc = Arc::clone(&audio_processor);
             tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                p.cleanup(&path);
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                proc.cleanup(&wav_path);
             });
         } else {
-            // Buffer empty - wait for more decoded audio
-            match tokio::time::timeout(Duration::from_millis(50), decoded_rx.recv()).await {
-                Ok(Some(path)) => {
-                    playback_buffer.push_back(path);
-                }
-                Ok(None) => break, // Channel closed
-                Err(_) => {} // Timeout, continue loop
-            }
+            eprintln!("❌ Decode failed");
         }
     }
 }

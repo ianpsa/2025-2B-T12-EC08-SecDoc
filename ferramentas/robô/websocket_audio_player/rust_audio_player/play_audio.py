@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Continuous megaphone streamer - sequential chunk delivery.
-Sends chunks in order without gaps for smooth playback.
+Simple megaphone player - sends complete WAV file to robot.
 """
 import asyncio
 import json
@@ -22,17 +21,13 @@ from unitree_webrtc_connect.webrtc_audiohub import WebRTCAudioHub
 from unitree_webrtc_connect.constants import AUDIO_API
 
 DEFAULT_ROBOT_IP = "192.168.123.161"
-
-# Chunk size for base64 splitting
 CHUNK_SIZE = 16384
 
 
-class ContinuousPlayer:
+class SimplePlayer:
     def __init__(self, robot_ip: str):
         self.robot_ip = robot_ip
         self.audio_hub = None
-        self._queue = asyncio.Queue()
-        self._sender_task = None
 
     async def connect(self):
         conn = UnitreeWebRTCConnection(
@@ -42,25 +37,11 @@ class ContinuousPlayer:
         self.audio_hub = WebRTCAudioHub(conn)
         await asyncio.sleep(0.2)
         await self.audio_hub.enter_megaphone()
-        
-        # Start background sender
-        self._sender_task = asyncio.create_task(self._send_loop())
 
-    async def _send_loop(self):
-        """Background task that sends queued audio sequentially."""
-        while True:
-            try:
-                wav_path = await self._queue.get()
-                await self._send_wav_internal(wav_path)
-                self._queue.task_done()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                pass
-
-    async def _send_wav_internal(self, wav_path: str):
-        """Send WAV file to megaphone - chunks sent SEQUENTIALLY."""
+    async def play_wav(self, wav_path: str):
+        """Send complete WAV file to megaphone."""
         if not os.path.exists(wav_path):
+            print("DONE", flush=True)
             return
         
         try:
@@ -68,13 +49,14 @@ class ContinuousPlayer:
                 data = f.read()
             
             if len(data) < 44:
+                print("DONE", flush=True)
                 return
 
             b64 = base64.b64encode(data).decode('utf-8')
             chunks = [b64[i:i + CHUNK_SIZE] for i in range(0, len(b64), CHUNK_SIZE)]
             total = len(chunks)
 
-            # Send chunks SEQUENTIALLY - megaphone API requires order!
+            # Send all chunks sequentially
             for i, chunk in enumerate(chunks, 1):
                 await self.audio_hub.data_channel.pub_sub.publish_request_new(
                     "rt/api/audiohub/request",
@@ -88,23 +70,17 @@ class ContinuousPlayer:
                         })
                     }
                 )
-                # Small delay between chunks to prevent overwhelming the buffer
-                if i < total:
-                    await asyncio.sleep(0.001)
-                    
+                
         except Exception as e:
-            pass
-
-    async def queue_wav(self, wav_path: str):
-        """Queue a WAV file for playback (non-blocking)."""
-        await self._queue.put(wav_path)
+            print(f"Error: {e}", file=sys.stderr)
+        
         print("DONE", flush=True)
 
 
 async def main():
     robot_ip = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_ROBOT_IP
     
-    player = ContinuousPlayer(robot_ip)
+    player = SimplePlayer(robot_ip)
     await player.connect()
     
     print("READY", flush=True)
@@ -120,7 +96,7 @@ async def main():
                 break
             path = line.decode().strip()
             if path:
-                await player.queue_wav(path)
+                await player.play_wav(path)
         except:
             pass
 
