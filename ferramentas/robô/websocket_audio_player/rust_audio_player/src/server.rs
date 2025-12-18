@@ -15,7 +15,7 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::audio::AudioProcessor;
 use crate::player::RobotPlayer;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct AudioItem {
     id: String,
 }
