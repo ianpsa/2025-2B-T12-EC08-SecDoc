@@ -15,7 +15,7 @@ pub struct RobotPlayer {
 
 impl RobotPlayer {
     pub async fn new(robot_ip: String, script_path: PathBuf) -> Option<Self> {
-        info!("Starting Python streaming player...");
+        info!("Starting Python player...");
 
         let mut child = match Command::new("python3")
             .arg(&script_path)
@@ -56,7 +56,7 @@ impl RobotPlayer {
                     Ok(_) => {
                         let msg = line.trim();
                         if msg == "READY" {
-                            info!("Python streaming player ready");
+                            info!("Python player ready");
                             *ready_flag.lock().await = true;
                         } else if msg == "DONE" {
                             let _ = done_tx.send(()).await;
@@ -78,38 +78,43 @@ impl RobotPlayer {
         None
     }
 
-    async fn send_command(&self, cmd: &str) {
+    pub async fn play_audio(&self, wav_path: &PathBuf) -> bool {
+        let path_str = match wav_path.to_str() {
+            Some(s) => s,
+            None => return false,
+        };
+
+        info!("Playing: {}", wav_path.file_name().unwrap_or_default().to_string_lossy());
+
+        // Drain stale DONE messages
+        {
+            let mut rx = self.done_rx.lock().await;
+            while rx.try_recv().is_ok() {}
+        }
+
         let mut stdin_guard = self.stdin.lock().await;
         if let Some(ref mut stdin) = *stdin_guard {
-            let _ = stdin.write_all(format!("{}\n", cmd).as_bytes()).await;
-            let _ = stdin.flush().await;
+            if stdin.write_all(format!("{}\n", path_str).as_bytes()).await.is_ok() {
+                let _ = stdin.flush().await;
+                drop(stdin_guard);
+
+                // Wait for completion
+                let mut rx = self.done_rx.lock().await;
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(60),
+                    rx.recv()
+                ).await {
+                    Ok(Some(())) => {
+                        info!("Playback complete");
+                        return true;
+                    }
+                    _ => {
+                        error!("Timeout");
+                        return false;
+                    }
+                }
+            }
         }
-    }
-
-    /// Start megaphone streaming mode
-    pub async fn start_streaming(&self) {
-        info!("Starting stream mode");
-        self.send_command("START").await;
-        // Small delay to let Python enter megaphone mode
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-
-    /// Stream a single chunk (plays immediately in megaphone mode)
-    pub async fn stream_chunk(&self, wav_path: &PathBuf) {
-        if let Some(path_str) = wav_path.to_str() {
-            self.send_command(&format!("CHUNK:{}", path_str)).await;
-        }
-    }
-
-    /// Stop megaphone streaming mode
-    pub async fn stop_streaming(&self) {
-        self.send_command("STOP").await;
-        // Wait for Python to confirm
-        let mut rx = self.done_rx.lock().await;
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            rx.recv()
-        ).await;
-        info!("Stream complete");
+        false
     }
 }

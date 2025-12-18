@@ -50,44 +50,13 @@ async fn main() {
 
     info!("Waiting for audio...");
 
-    // Process audio messages with streaming chunks
+    // Simple: decode, convert, play
     while let Some(msg) = rx.recv().await {
-        info!("Received audio - starting streaming playback");
+        info!("Received audio");
         
-        // Decode base64 to file
-        let input_path = match audio_processor.decode_to_file(&msg.audio, &msg.format).await {
-            Some(p) => p,
-            None => {
-                error!("Failed to decode audio");
-                continue;
-            }
-        };
-
-        // Start megaphone mode for streaming
-        robot_player.start_streaming().await;
-
-        // Collect all chunks first, then stream them
-        let mut chunk_rx = audio_processor.convert_to_streaming_chunks(&input_path).await;
-        let mut chunks: Vec<PathBuf> = Vec::new();
-
-        // Wait for all chunks to be ready
-        while let Some(chunk_path) = chunk_rx.recv().await {
-            chunks.push(chunk_path);
-        }
-
-        info!("Streaming {} chunks", chunks.len());
-
-        // Now stream all chunks
-        for chunk_path in &chunks {
-            robot_player.stream_chunk(chunk_path).await;
-        }
-
-        // End streaming
-        robot_player.stop_streaming().await;
-
-        // Cleanup after streaming is done
-        for chunk_path in chunks {
-            audio_processor.cleanup(&chunk_path).await;
+        if let Some(wav_path) = audio_processor.decode_and_convert(&msg.audio, &msg.format).await {
+            robot_player.play_audio(&wav_path).await;
+            audio_processor.cleanup(&wav_path).await;
         }
     }
 }

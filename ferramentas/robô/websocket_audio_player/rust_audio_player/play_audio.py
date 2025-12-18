@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 """
-Streaming WebRTC audio player using Megaphone mode.
-Receives commands from Rust and streams WAV chunks in real-time.
-Protocol:
-  - START: Enter megaphone mode
-  - CHUNK:<path>: Stream a WAV chunk file
-  - STOP: Exit megaphone mode and send DONE
+Simple WebRTC audio player using Megaphone streaming.
+Receives WAV file paths from stdin and streams them to the robot.
+Usage: python3 play_audio.py [robot_ip]
 """
 import asyncio
 import json
@@ -30,108 +27,96 @@ from unitree_webrtc_connect.webrtc_driver import (
 from unitree_webrtc_connect.webrtc_audiohub import WebRTCAudioHub
 from unitree_webrtc_connect.constants import AUDIO_API
 
-# Default robot IP
 DEFAULT_ROBOT_IP = "192.168.123.161"
 
 
-class StreamingPlayer:
-    """
-    Streams audio chunks to robot using Megaphone mode.
-    Each chunk plays immediately as it arrives.
-    """
+class MegaphonePlayer:
+    """Streams audio directly to robot using Megaphone mode."""
     
     def __init__(self, robot_ip: str):
         self.robot_ip = robot_ip
         self.webrtc_conn = None
         self.audio_hub = None
-        self.in_megaphone_mode = False
-        self.chunk_index = 0
 
     async def connect(self):
-        logger.info(f"Connecting to robot at {self.robot_ip}")
+        logger.info(f"Connecting to {self.robot_ip}")
         self.webrtc_conn = UnitreeWebRTCConnection(
             WebRTCConnectionMethod.LocalSTA, ip=self.robot_ip
         )
         await self.webrtc_conn.connect()
         self.audio_hub = WebRTCAudioHub(self.webrtc_conn, logger)
         await asyncio.sleep(2.0)
-        logger.info("WebRTC ready")
+        logger.info("Connected")
 
-    async def start_streaming(self):
-        """Enter megaphone mode for streaming"""
-        if not self.in_megaphone_mode:
-            await self.audio_hub.enter_megaphone()
-            self.in_megaphone_mode = True
-            self.chunk_index = 0
-            logger.info("Streaming started")
-
-    async def stop_streaming(self):
-        """Exit megaphone mode"""
-        if self.in_megaphone_mode:
-            await self.audio_hub.exit_megaphone()
-            self.in_megaphone_mode = False
-            logger.info(f"Streaming stopped ({self.chunk_index} chunks)")
-
-    async def stream_chunk(self, wav_path: str):
-        """
-        Stream a single WAV chunk to the robot.
-        The chunk plays immediately in megaphone mode.
-        """
-        # Clean up path (remove any whitespace)
-        wav_path = wav_path.strip()
-        
+    async def stream_wav(self, wav_path: str):
+        """Stream a WAV file using megaphone mode (plays immediately)."""
         if not os.path.exists(wav_path):
             logger.error(f"File not found: {wav_path}")
-            return
+            return False
 
         try:
-            # Read and encode chunk
             with open(wav_path, 'rb') as f:
                 audio_data = f.read()
             
-            if len(audio_data) == 0:
-                logger.warning(f"Empty chunk: {wav_path}")
-                return
-                
-            self.chunk_index += 1
-            
-            b64_data = base64.b64encode(audio_data).decode('utf-8')
-            
-            # Split into smaller pieces for the API (8KB each)
-            piece_size = 8192
-            pieces = [b64_data[i:i + piece_size] for i in range(0, len(b64_data), piece_size)]
-            total_pieces = len(pieces)
+            if len(audio_data) < 44:  # WAV header is 44 bytes
+                logger.error("Invalid WAV file")
+                return False
 
-            # Send all pieces of this chunk
-            for i, piece in enumerate(pieces, 1):
-                parameter = {
-                    'current_block_size': len(piece),
-                    'block_content': piece,
-                    'current_block_index': i,
-                    'total_block_number': total_pieces
-                }
-                
+            logger.info(f"Streaming {len(audio_data)} bytes")
+            
+            # Enter megaphone mode
+            await self.audio_hub.enter_megaphone()
+            await asyncio.sleep(0.1)
+            
+            # Encode and split into chunks
+            b64_data = base64.b64encode(audio_data).decode('utf-8')
+            chunk_size = 8192
+            chunks = [b64_data[i:i + chunk_size] for i in range(0, len(b64_data), chunk_size)]
+            total = len(chunks)
+            
+            # Stream all chunks
+            for i, chunk in enumerate(chunks, 1):
                 await self.audio_hub.data_channel.pub_sub.publish_request_new(
                     "rt/api/audiohub/request",
                     {
                         "api_id": AUDIO_API['UPLOAD_MEGAPHONE'],
-                        "parameter": json.dumps(parameter, ensure_ascii=True)
+                        "parameter": json.dumps({
+                            'current_block_size': len(chunk),
+                            'block_content': chunk,
+                            'current_block_index': i,
+                            'total_block_number': total
+                        })
                     }
                 )
-
+                # Small delay every 10 chunks
+                if i % 10 == 0:
+                    await asyncio.sleep(0.01)
+            
+            # Exit megaphone mode
+            await asyncio.sleep(0.3)
+            await self.audio_hub.exit_megaphone()
+            
+            logger.info("Stream complete")
+            return True
+            
         except Exception as e:
-            logger.error(f"Stream chunk error: {e}")
+            logger.error(f"Error: {e}")
+            try:
+                await self.audio_hub.exit_megaphone()
+            except:
+                pass
+            return False
 
 
 async def main():
     robot_ip = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_ROBOT_IP
-    logger.info(f"Robot IP: {robot_ip}")
     
-    player = StreamingPlayer(robot_ip)
+    player = MegaphonePlayer(robot_ip)
     await player.connect()
 
     print("READY", flush=True)
 
+    # Read file paths from stdin
     loop = asyncio.get_event_loop()
     reader = asyncio.StreamReader()
     protocol = asyncio.StreamReaderProtocol(reader)
@@ -143,26 +128,10 @@ async def main():
             if not line:
                 break
             
-            cmd = line.decode().strip()
-            
-            if not cmd:
-                continue
-            
-            if cmd == "START":
-                await player.start_streaming()
-            elif cmd == "STOP":
-                await player.stop_streaming()
+            path = line.decode().strip()
+            if path:
+                await player.stream_wav(path)
                 print("DONE", flush=True)
-            elif ":" in cmd:
-                # Parse CHUNK:/path/to/file.wav
-                parts = cmd.split(":", 1)
-                if len(parts) == 2 and parts[0] == "CHUNK":
-                    chunk_path = parts[1]
-                    await player.stream_chunk(chunk_path)
-                else:
-                    logger.warning(f"Unknown command: {cmd}")
-            else:
-                logger.warning(f"Unknown command: {cmd}")
             
         except Exception as e:
             logger.error(f"Error: {e}")
