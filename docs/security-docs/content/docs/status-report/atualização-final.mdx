@@ -1,0 +1,55 @@
+---
+title: Status Report 03
+description: Status Report Core Team
+---
+
+### **Relatório de Status Integrado: Definições Finais de Arquitetura**
+
+#### **1. Resumo Executivo**
+
+Nesta reta final do projeto, consolidamos a arquitetura de navegação e comunicação.
+
+1. **Navegação:** Confirmamos que a lógica de movimentação não depende da interface visual (Rviz), mas sim de coordenadas relativas fixas (**Nav2 + SLAM**).
+2. **Áudio:** O sistema de voz do robô está funcional, realizando uma conversão complexa de formatos em tempo real para garantir que o robô "fale".
+3. **Rede:** Simplificamos a infraestrutura, mantendo o robô em uma rede dedicada para garantir estabilidade, abandonando a integração complexa entre redes distintas neste momento.
+
+---
+
+#### **2. Navegação e Posicionamento**
+
+Refinamos o entendimento sobre como o robô sabe para onde ir.
+
+* **A Estratégia:** A Yas definiu **Endpoints** (comandos diretos) para cada **Checkpoint** (posições físicas no mapa).
+* **A Tese de Funcionamento:** O sistema opera com **Posicionamento Relativo**.
+* *Explicação:* Se o robô for ligado sempre na mesma "Posição Inicial" (Home), ele sabe matematicamente onde fica cada sala ou mesa, baseando-se nas coordenadas gravadas no mapa do **SLAM**.
+
+
+---
+
+#### **3. Sistema de Áudio (WebRTC e Conversão)**
+
+Finalizei a implementação do módulo de voz. O fluxo de dados para o robô falar é complexo e segue as seguintes etapas de "tradução":
+
+1. **Recebimento:** O sistema recebe o áudio via **WebSocket** em formato de texto codificado (**Base64**).
+2. **Decodificação:** Transformamos esse código Base64 em um arquivo de áudio compactado (**MP3**).
+3. **Conversão:** Convertemos o MP3 para **WAV** (um formato de áudio mais "puro" e rápido para processamento).
+4. **Reprodução:** Estabelecemos uma conexão interna via **WebRTC** que toca esse arquivo WAV nos alto-falantes do robô.
+
+---
+
+#### **4. Infraestrutura de Rede**
+
+Houve uma mudança  na conexão do robô.
+
+* **O Desafio:** O Widman estava tentando fazer com que as informações do sistema (ROS) viajassem entre redes diferentes da instituição (ex: da rede *Inteli.IOT* para outras).
+* **O Bloqueio:** Essa propagação entre redes provou-se instável e complexa demais para o prazo atual.
+* **Decisão:** Abandonamos temporariamente a ideia de múltiplas redes. O robô agora opera 100% conectado à rede dedicada **"InteliRobo"**. Isso garantiu que ele se locomova e comunique sem falhas de sinal.
+
+---
+
+#### **5. Glossário**
+
+* **WebSocket:** É como um "tubo" aberto de internet que permite enviar dados (como o áudio) continuamente, sem ter que recarregar a conexão toda hora.
+* **Base64:** É uma forma de transformar arquivos (como som ou imagem) em um texto gigante para poder enviar pela internet facilmente.
+* **WebRTC (Web Real-Time Communication):** Tecnologia que permite transmissão de áudio e vídeo instantânea (é o que o Google Meet ou Zoom usam).
+* **Inteli.IOT / InteliRobo:** Nomes das redes Wi-Fi/Internas da instituição. Optamos pela *InteliRobo* por ser a "casa" segura do robô.

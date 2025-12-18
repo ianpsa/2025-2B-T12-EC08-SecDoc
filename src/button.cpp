@@ -1,54 +1,70 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 
-const char* ssid = "TPLinkBEA0";
-const char* password = "unitree123";
+const char *endpointBase = "http://10.8.250.18:3000/emergency";
 
-const int button = 0;
+const char *ssid = "InteliRobo";
+const char *password = "12345678";
+
+const int button = 6;
+
+bool lastState = HIGH;
+unsigned long lastDebounce = 0;
+const unsigned long debounceTime = 80; // ajuste fino
 
 void setup() {
-  Serial.begin(115200);
-  WiFi.begin(ssid, password);
+    Serial.begin(115200);
 
-  pinMode(button, INPUT_PULLUP);
+    WiFi.begin(ssid, password);
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println("\nWiFi conectado!");
 
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("Connected to Wi-Fi");
-  Serial.print("IP Address: ");
-  Serial.println(WiFi.localIP());
-  Serial.print("Gateway (Router IP): ");
-  Serial.println(WiFi.gatewayIP());  // Get router's IP address
+
+    pinMode(button, INPUT_PULLUP);
 }
 
 void loop() {
 
-  if (digitalRead(button)) {
-    if (WiFi.isConnected()) {
-      HTTPClient http;
-      http.begin("http://192.168.0.43:3000/kill");
-      http.addHeader("Content-Type", "application/json");
+    // lê o botão
+    int currentState = digitalRead(button);
 
-      String postBody = "{\"message\": \"SOCORROOOOOO!\"}";
-      int httpResponseCode = http.POST(postBody);
+    // Debounce manual
+    if (currentState != lastState) {
+        lastDebounce = millis();
+        lastState = currentState;
 
-      if (httpResponseCode > 0) {
-        String responsePayload = http.getString();
-        Serial.print("HTTP Response Code: ");
-        Serial.println(httpResponseCode);
-        Serial.print("Server Response: ");
-        Serial.println(responsePayload);
-      } else {
-        Serial.print("Error sending POST request: ");
-        Serial.println(httpResponseCode);
-      }
-      http.end();
-    } else {
-      Serial.println("WiFi Disconnected. Reconnecting...");
-      WiFi.begin(ssid, password);  // Attempt to reconnect
+        delay(10); // Estabilização rápida opcional
     }
-    delay(1000);
-  }
+
+    if (millis() - lastDebounce > debounceTime) {
+
+        // Botão apertado (HIGH → LOW)
+        if (currentState == LOW) {
+
+            HTTPClient http;
+            http.begin(String(endpointBase) + "/release");
+            http.addHeader("Content-Type", "application/json");
+            int code = http.POST("{}");
+            http.end();
+
+            Serial.println("Kill enviado. Code: " + String(code));
+
+            // Evita múltiplos envios enquanto mantém pressionado
+            while (digitalRead(button) == LOW) {
+                delay(10);
+            }
+
+
+            HTTPClient http2;
+            http2.begin(String(endpointBase) + "/press");
+            http2.addHeader("Content-Type", "application/json");
+            code = http2.POST("{}");
+            http2.end();
+        }
+    }
+
+    delay(5); // pequena folga
 }
