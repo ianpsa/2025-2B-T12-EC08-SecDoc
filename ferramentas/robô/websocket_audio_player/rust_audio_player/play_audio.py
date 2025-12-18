@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Zero-delay Megaphone streamer.
-Maintains WebRTC connection and megaphone mode.
-Plays chunks back-to-back with overlap.
+Continuous megaphone streamer - no gaps between chunks.
+Sends chunks immediately without waiting for playback completion.
 """
 import asyncio
 import json
@@ -25,11 +24,10 @@ from unitree_webrtc_connect.constants import AUDIO_API
 DEFAULT_ROBOT_IP = "192.168.123.161"
 
 
-class StreamPlayer:
+class ContinuousPlayer:
     def __init__(self, robot_ip: str):
         self.robot_ip = robot_ip
         self.audio_hub = None
-        self.queue = asyncio.Queue()
 
     async def connect(self):
         conn = UnitreeWebRTCConnection(
@@ -40,55 +38,52 @@ class StreamPlayer:
         await asyncio.sleep(0.2)
         await self.audio_hub.enter_megaphone()
 
-    async def player_loop(self):
-        """Play chunks with minimal gap."""
-        while True:
-            wav_path = await self.queue.get()
+    async def send_wav(self, wav_path: str):
+        """Send WAV to megaphone buffer immediately - no waiting."""
+        if not os.path.exists(wav_path):
+            return
+        
+        try:
+            with open(wav_path, 'rb') as f:
+                data = f.read()
             
-            try:
-                if os.path.exists(wav_path):
-                    with open(wav_path, 'rb') as f:
-                        data = f.read()
-                    
-                    if len(data) >= 44:
-                        # Send to megaphone
-                        b64 = base64.b64encode(data).decode('utf-8')
-                        chunks = [b64[i:i + 16384] for i in range(0, len(b64), 16384)]
-                        total = len(chunks)
+            if len(data) < 44:
+                return
 
-                        for i, chunk in enumerate(chunks, 1):
-                            await self.audio_hub.data_channel.pub_sub.publish_request_new(
-                                "rt/api/audiohub/request",
-                                {
-                                    "api_id": AUDIO_API['UPLOAD_MEGAPHONE'],
-                                    "parameter": json.dumps({
-                                        'current_block_size': len(chunk),
-                                        'block_content': chunk,
-                                        'current_block_index': i,
-                                        'total_block_number': total
-                                    })
-                                }
-                            )
+            b64 = base64.b64encode(data).decode('utf-8')
+            chunk_size = 16384
+            chunks = [b64[i:i + chunk_size] for i in range(0, len(b64), chunk_size)]
+            total = len(chunks)
 
-                        # Calculate duration and wait (with overlap for next chunk)
-                        audio_bytes = len(data) - 44
-                        duration = audio_bytes / 32000.0
-                        # Wait less to overlap with next chunk start
-                        await asyncio.sleep(max(0, duration - 0.08))
-            except:
-                pass
+            # Send all chunks fast - megaphone buffers internally
+            for i, chunk in enumerate(chunks, 1):
+                await self.audio_hub.data_channel.pub_sub.publish_request_new(
+                    "rt/api/audiohub/request",
+                    {
+                        "api_id": AUDIO_API['UPLOAD_MEGAPHONE'],
+                        "parameter": json.dumps({
+                            'current_block_size': len(chunk),
+                            'block_content': chunk,
+                            'current_block_index': i,
+                            'total_block_number': total
+                        })
+                    }
+                )
             
-            print("DONE", flush=True)
-            self.queue.task_done()
+            # DON'T WAIT - let megaphone buffer handle timing
+            # This allows next chunk to be sent immediately
+            
+        except:
+            pass
+        
+        print("DONE", flush=True)
 
 
 async def main():
     robot_ip = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_ROBOT_IP
     
-    player = StreamPlayer(robot_ip)
+    player = ContinuousPlayer(robot_ip)
     await player.connect()
-    
-    asyncio.create_task(player.player_loop())
     
     print("READY", flush=True)
 
@@ -103,7 +98,7 @@ async def main():
                 break
             path = line.decode().strip()
             if path:
-                await player.queue.put(path)
+                await player.send_wav(path)
         except:
             pass
 
