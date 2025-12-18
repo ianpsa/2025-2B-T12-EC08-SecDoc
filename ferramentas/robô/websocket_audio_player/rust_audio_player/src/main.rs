@@ -50,17 +50,35 @@ async fn main() {
 
     info!("Waiting for audio...");
 
-    // Process audio messages sequentially (one at a time)
+    // Process audio messages with streaming chunks
     while let Some(msg) = rx.recv().await {
-        info!("Received audio message");
+        info!("Received audio - starting streaming playback");
         
-        if let Some(wav_path) = audio_processor.decode_and_convert(&msg.audio, &msg.format).await {
-            if wav_path.exists() {
-                robot_player.play_audio(&wav_path).await;
-                audio_processor.cleanup(&wav_path).await;
-            } else {
-                error!("WAV file missing: {:?}", wav_path);
+        // Decode base64 to file
+        let input_path = match audio_processor.decode_to_file(&msg.audio, &msg.format).await {
+            Some(p) => p,
+            None => {
+                error!("Failed to decode audio");
+                continue;
             }
+        };
+
+        // Start megaphone mode for streaming
+        robot_player.start_streaming().await;
+
+        // Convert to chunks and stream them as they're ready
+        let mut chunk_rx = audio_processor.convert_to_streaming_chunks(&input_path).await;
+        let mut chunk_count = 0;
+
+        while let Some(chunk_path) = chunk_rx.recv().await {
+            chunk_count += 1;
+            // Stream each chunk as it becomes available
+            robot_player.stream_chunk(&chunk_path).await;
+            audio_processor.cleanup(&chunk_path).await;
         }
+
+        // End streaming
+        robot_player.stop_streaming().await;
+        info!("Streamed {} chunks", chunk_count);
     }
 }
