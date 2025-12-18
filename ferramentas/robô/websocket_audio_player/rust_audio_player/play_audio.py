@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Optimized Megaphone audio streamer.
-Receives WAV file paths from stdin and streams them to the robot with minimal latency.
+Optimized Megaphone streamer - continuous playback without gaps.
+Stays in megaphone mode and streams chunks back-to-back.
 """
 import asyncio
 import json
@@ -30,6 +30,7 @@ class MegaphonePlayer:
         self.webrtc_conn = None
         self.audio_hub = None
         self.in_megaphone = False
+        self.lock = asyncio.Lock()
 
     async def connect(self):
         self.webrtc_conn = UnitreeWebRTCConnection(
@@ -37,15 +38,15 @@ class MegaphonePlayer:
         )
         await self.webrtc_conn.connect()
         self.audio_hub = WebRTCAudioHub(self.webrtc_conn)
-        await asyncio.sleep(1.0)
-
-    async def ensure_megaphone(self):
-        if not self.in_megaphone:
-            await self.audio_hub.enter_megaphone()
-            self.in_megaphone = True
-            await asyncio.sleep(0.05)
+        await asyncio.sleep(0.5)
+        
+        # Enter megaphone mode once and stay in it
+        await self.audio_hub.enter_megaphone()
+        self.in_megaphone = True
+        await asyncio.sleep(0.1)
 
     async def stream_wav(self, wav_path: str):
+        """Stream WAV file - non-blocking, returns immediately after sending."""
         if not os.path.exists(wav_path):
             return False
 
@@ -56,35 +57,39 @@ class MegaphonePlayer:
             if len(audio_data) < 44:
                 return False
 
-            await self.ensure_megaphone()
-            
-            # Larger chunks = fewer requests = less overhead
-            b64_data = base64.b64encode(audio_data).decode('utf-8')
-            chunk_size = 16384  # Increased from 8192
-            chunks = [b64_data[i:i + chunk_size] for i in range(0, len(b64_data), chunk_size)]
-            total = len(chunks)
-            
-            # Stream all chunks with minimal delay
-            for i, chunk in enumerate(chunks, 1):
-                await self.audio_hub.data_channel.pub_sub.publish_request_new(
-                    "rt/api/audiohub/request",
-                    {
-                        "api_id": AUDIO_API['UPLOAD_MEGAPHONE'],
-                        "parameter": json.dumps({
-                            'current_block_size': len(chunk),
-                            'block_content': chunk,
-                            'current_block_index': i,
-                            'total_block_number': total
-                        })
-                    }
-                )
-                # Minimal delay only every 20 chunks
-                if i % 20 == 0:
-                    await asyncio.sleep(0.005)
+            async with self.lock:
+                # Encode and send all chunks rapidly
+                b64_data = base64.b64encode(audio_data).decode('utf-8')
+                chunk_size = 16384
+                chunks = [b64_data[i:i + chunk_size] for i in range(0, len(b64_data), chunk_size)]
+                total = len(chunks)
+                
+                # Send all chunks as fast as possible
+                for i, chunk in enumerate(chunks, 1):
+                    await self.audio_hub.data_channel.pub_sub.publish_request_new(
+                        "rt/api/audiohub/request",
+                        {
+                            "api_id": AUDIO_API['UPLOAD_MEGAPHONE'],
+                            "parameter": json.dumps({
+                                'current_block_size': len(chunk),
+                                'block_content': chunk,
+                                'current_block_index': i,
+                                'total_block_number': total
+                            })
+                        }
+                    )
+                
+                # Calculate duration and wait for it to finish playing
+                # WAV header: 16kHz, mono, 16-bit = 32000 bytes/sec
+                audio_bytes = len(audio_data) - 44  # subtract header
+                duration_sec = audio_bytes / 32000.0
+                
+                # Wait for playback to finish (with small buffer)
+                await asyncio.sleep(max(0.01, duration_sec - 0.05))
             
             return True
             
-        except:
+        except Exception as e:
             return False
 
 

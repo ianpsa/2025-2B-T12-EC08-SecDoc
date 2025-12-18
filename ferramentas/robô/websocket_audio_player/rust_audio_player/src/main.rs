@@ -6,14 +6,13 @@ mod websocket;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::info;
 
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
         .with_target(false)
         .with_thread_ids(false)
-        .with_max_level(tracing::Level::WARN)  // Only warnings and errors
+        .with_max_level(tracing::Level::ERROR)
         .init();
 
     let config = match config::Config::from_args() {
@@ -37,26 +36,37 @@ async fn main() {
     ).await {
         Some(p) => Arc::new(p),
         None => {
-            eprintln!("❌ Failed to initialize robot player");
+            eprintln!("Failed to initialize robot player");
             std::process::exit(1);
         }
     };
 
-    // Larger buffer for smoother playback
-    let (tx, mut rx) = mpsc::channel::<websocket::AudioMessage>(64);
+    // Channel for receiving audio from websocket
+    let (ws_tx, mut ws_rx) = mpsc::channel::<websocket::AudioMessage>(128);
+    
+    // Channel for sending processed WAV paths to player
+    let (wav_tx, wav_rx) = mpsc::channel::<PathBuf>(32);
 
+    // WebSocket receiver task
     let ws_url = config.websocket_url.clone();
     tokio::spawn(async move {
-        websocket::connect_and_receive(&ws_url, tx).await;
+        websocket::connect_and_receive(&ws_url, ws_tx).await;
     });
 
-    println!("🎵 Ready - waiting for audio...\n");
-
-    // Process chunks as they arrive
-    while let Some(msg) = rx.recv().await {
-        if let Some(wav_path) = audio_processor.decode_and_convert(&msg.audio, &msg.format).await {
-            robot_player.play_audio(&wav_path).await;
-            audio_processor.cleanup(&wav_path).await;
+    // Audio processing task - converts chunks in background
+    let processor = Arc::clone(&audio_processor);
+    let wav_sender = wav_tx.clone();
+    tokio::spawn(async move {
+        while let Some(msg) = ws_rx.recv().await {
+            if let Some(wav_path) = processor.decode_and_convert(&msg.audio, &msg.format).await {
+                if wav_sender.send(wav_path).await.is_err() {
+                    break;
+                }
+            }
         }
-    }
+    });
+
+
+    // Player task - plays chunks as they become ready (no waiting between)
+    player::play_continuous(robot_player, wav_rx, audio_processor).await;
 }
