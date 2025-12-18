@@ -97,7 +97,7 @@ async fn main() {
                 println!("🎵 Starting playback (buffered {} chunks)", playback_buffer.len());
             } else {
                 // Wait for more data
-                if let Ok(path) = decoded_rx.recv().await {
+                if let Some(path) = decoded_rx.recv().await {
                     playback_buffer.push_back(path);
                 }
                 continue;
