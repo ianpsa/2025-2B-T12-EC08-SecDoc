@@ -1,9 +1,8 @@
-use bytes::Bytes;
+use base64::Engine;
 use futures_util::StreamExt;
 use serde::Deserialize;
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-use url::Url;
 
 #[derive(Debug, Deserialize)]
 pub struct AudioMessage {
@@ -23,15 +22,11 @@ pub struct AudioData {
 }
 
 pub async fn connect_and_receive(websocket_url: &str, tx: mpsc::Sender<AudioData>) {
-    let url = match Url::parse(websocket_url) {
-        Ok(u) => u,
-        Err(_) => return,
-    };
-
     loop {
         println!("🔌 Connecting to {}...", websocket_url);
 
-        match connect_async(&url).await {
+        // Pass &str directly - tokio-tungstenite 0.24 accepts &str
+        match connect_async(websocket_url).await {
             Ok((ws_stream, _)) => {
                 println!("✅ Connected!\n");
                 let (_, mut read) = ws_stream.split();
@@ -94,10 +89,8 @@ fn parse_binary_message(data: &[u8]) -> Option<AudioData> {
     let audio_bytes = &data[1 + format_len..];
     
     // Convert to base64 for compatibility with existing pipeline
-    let audio_b64 = base64::Engine::encode(
-        &base64::engine::general_purpose::STANDARD,
-        audio_bytes
-    );
+    let audio_b64 = base64::engine::general_purpose::STANDARD.encode(audio_bytes);
     
     Some(AudioData { audio_b64, format })
 }
+

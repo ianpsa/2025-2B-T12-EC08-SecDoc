@@ -14,7 +14,6 @@ tempfile = "3"
 url = "2"
 crossbeam-channel = "0.5"  # Faster channels for worker pool
 parking_lot = "0.12"       # Faster mutexes
-bytes = "1"                # Zero-copy byte handling
 
 [profile.release]
 opt-level = 3
