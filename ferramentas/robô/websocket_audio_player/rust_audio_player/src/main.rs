@@ -3,125 +3,117 @@ mod config;
 mod player;
 mod websocket;
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 
-const PRE_BUFFER_COUNT: usize = 3; // Wait for 3 chunks before starting playback
+/// Pre-buffer chunks before starting playback (reduces stuttering)
+const PRE_BUFFER_COUNT: usize = 2;
 
-#[tokio::main]
+/// Maximum playback buffer size
+const MAX_BUFFER: usize = 16;
+
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
     let config = match config::Config::from_args() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("{}", e);
+            eprintln!("Config error: {}", e);
             std::process::exit(1);
         }
     };
 
-    println!("Robot: {}", config.robot_ip);
-    println!("WebSocket: {}", config.websocket_url);
+    println!("🤖 Robot IP: {}", config.robot_ip);
+    println!("📡 WebSocket: {}", config.websocket_url);
+    println!("⚡ Workers: 4 parallel decoders\n");
 
-    let audio_processor = Arc::new(audio::AudioProcessor::new().expect("temp dir"));
+    // Initialize audio processor with worker pool
+    let audio_processor = Arc::new(audio::AudioProcessor::new().expect("Failed to create temp dir"));
 
+    // Initialize robot player
     let robot_player = match player::RobotPlayer::new(
         config.robot_ip.clone(),
         PathBuf::from(&config.python_script),
-    ).await {
+    )
+    .await
+    {
         Some(p) => Arc::new(p),
         None => {
-            eprintln!("Failed to init player");
+            eprintln!("❌ Failed to initialize robot player");
             std::process::exit(1);
         }
     };
 
-    let (ws_tx, mut ws_rx) = mpsc::channel::<websocket::AudioMessage>(64);
-    let (decoded_tx, mut decoded_rx) = mpsc::channel::<PathBuf>(32);
+    // Channel for WebSocket messages
+    let (ws_tx, mut ws_rx) = mpsc::channel::<websocket::AudioData>(128);
 
-    // WebSocket receiver
+    // WebSocket receiver task
     let ws_url = config.websocket_url.clone();
     tokio::spawn(async move {
         websocket::connect_and_receive(&ws_url, ws_tx).await;
     });
 
-    // Parallel decoder - spawns multiple FFmpeg
-    let proc = Arc::clone(&audio_processor);
-    let dtx = decoded_tx.clone();
-    tokio::spawn(async move {
-        let mut handles = Vec::new();
-        let mut seq = 0u64;
-        
-        while let Some(msg) = ws_rx.recv().await {
-            let p = Arc::clone(&proc);
-            let tx = dtx.clone();
-            let s = seq;
-            seq += 1;
-            
-            let h = tokio::spawn(async move {
-                if let Some(path) = p.decode_and_convert(&msg.audio, &msg.format).await {
-                    (s, path)
-                } else {
-                    (s, PathBuf::new())
-                }
-            });
-            handles.push(h);
-            
-            // Process completed decodes
-            let mut i = 0;
-            while i < handles.len() {
-                if handles[i].is_finished() {
-                    if let Ok((_, path)) = handles.remove(i).await {
-                        if path.exists() {
-                            let _ = tx.send(path).await;
-                        }
-                    }
-                } else {
-                    i += 1;
-                }
-            }
-        }
-        
-        // Finish remaining
-        for h in handles {
-            if let Ok((_, path)) = h.await {
-                if path.exists() {
-                    let _ = dtx.send(path).await;
-                }
-            }
-        }
-    });
-
-    // Pre-buffer then play continuously
-    let mut buffer: Vec<PathBuf> = Vec::new();
+    // Playback buffer (ring buffer style)
+    let mut playback_buffer: VecDeque<PathBuf> = VecDeque::with_capacity(MAX_BUFFER);
     let mut started = false;
+    let mut chunks_received = 0u64;
+    let mut chunks_played = 0u64;
+
+    // Main processing loop - producer/consumer pattern
+    let proc = Arc::clone(&audio_processor);
     
-    while let Some(path) = decoded_rx.recv().await {
-        buffer.push(path);
-        
-        // Wait for pre-buffer before starting
-        if !started && buffer.len() >= PRE_BUFFER_COUNT {
-            started = true;
-            println!("Buffered {} chunks, starting playback", PRE_BUFFER_COUNT);
-        }
-        
-        // Send buffered chunks
-        if started {
-            while let Some(p) = buffer.first().cloned() {
-                buffer.remove(0);
-                robot_player.send_audio(&p).await;
-                
-                // Cleanup later
-                let proc = Arc::clone(&audio_processor);
-                tokio::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                    proc.cleanup(&p).await;
-                });
+    loop {
+        tokio::select! {
+            // Receive from WebSocket and submit for decoding
+            Some(data) = ws_rx.recv() => {
+                if proc.submit(&data.audio_b64, &data.format).is_some() {
+                    chunks_received += 1;
+                    if chunks_received % 10 == 0 {
+                        println!("📥 Received: {} | Played: {} | Buffer: {}", 
+                            chunks_received, chunks_played, playback_buffer.len());
+                    }
+                }
+            }
+            
+            // Poll for decoded chunks (non-blocking)
+            _ = tokio::time::sleep(Duration::from_millis(5)) => {
+                // Collect decoded chunks into buffer
+                while let Some(path) = proc.try_recv_ordered() {
+                    if playback_buffer.len() < MAX_BUFFER {
+                        playback_buffer.push_back(path);
+                    } else {
+                        // Buffer full, cleanup oldest
+                        if let Some(old) = playback_buffer.pop_front() {
+                            proc.cleanup(&old);
+                        }
+                        playback_buffer.push_back(path);
+                    }
+                }
+
+                // Start playback after pre-buffer
+                if !started && playback_buffer.len() >= PRE_BUFFER_COUNT {
+                    started = true;
+                    println!("🎵 Starting playback (buffered {} chunks)", playback_buffer.len());
+                }
+
+                // Send chunks to robot
+                if started {
+                    while let Some(path) = playback_buffer.pop_front() {
+                        robot_player.send_audio(&path).await;
+                        chunks_played += 1;
+
+                        // Cleanup in background
+                        let p = proc.clone();
+                        let path_clone = path.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(Duration::from_secs(3)).await;
+                            p.cleanup(&path_clone);
+                        });
+                    }
+                }
             }
         }
-    }
-    
-    // Flush remaining
-    for p in buffer {
-        robot_player.send_audio(&p).await;
     }
 }
