@@ -28,15 +28,22 @@ impl AudioProcessor {
         let input_path = self.temp_dir.join(format!("i{}.{}", id, format));
         let output_path = self.temp_dir.join(format!("o{}.wav", id));
 
+        // Decode base64
         let audio_bytes = base64::engine::general_purpose::STANDARD.decode(audio_b64).ok()?;
         tokio::fs::write(&input_path, &audio_bytes).await.ok()?;
 
-        // Ultra-fast conversion
+        // Fast FFmpeg conversion
         let status = Command::new("ffmpeg")
             .args([
-                "-y", "-hide_banner", "-loglevel", "error",
+                "-y",
+                "-hide_banner",
+                "-loglevel", "error",
+                "-threads", "1",
                 "-i", input_path.to_str()?,
-                "-ar", "16000", "-ac", "1", "-f", "wav",
+                "-ar", "16000",
+                "-ac", "1",
+                "-acodec", "pcm_s16le",
+                "-f", "wav",
                 output_path.to_str()?,
             ])
             .stdout(std::process::Stdio::null())
@@ -44,6 +51,7 @@ impl AudioProcessor {
             .status()
             .await;
 
+        // Cleanup input immediately
         let _ = tokio::fs::remove_file(&input_path).await;
 
         match status {
