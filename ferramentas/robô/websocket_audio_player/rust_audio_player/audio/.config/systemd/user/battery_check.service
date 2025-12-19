@@ -1,0 +1,6 @@
+[Unit]
+Description=Check battery level and play a sound if low
+
+[Service]
+Type=oneshot
+ExecStart=/home/asvarius/battery_check.sh

@@ -24,43 +24,16 @@
     { "id": "20_quantidade_clubes" },
     { "id": "21_lista_clubes" },
     { "id": "22_lista2_clubes" },
-    { "id": "23_diversidade" },
-    { "id": "24_wave" },
-    { "id": "25_fim_clube" },
-    { "id": "26_qa_clubes" }
+    { "id": "23_wave" },
+    { "id": "24_diversidade" },
+    { "id": "25_fim_clube" }
   ],
 
   "checkpoint_3": [
-    { "id": "26_sem_materias" },
-    { "id": "27_explicacao_pbl" },
-    { "id": "28_aprendendo_testando" },
-    { "id": "29_aprendendo_testando2" },
-    { "id": "30_momento_dev" },
-    { "id": "31_momento2_dev" },
-    { "id": "32_explicacao_dev" },
-    { "id": "33_explicacao_autoestudo" },
-    { "id": "34_autoestudo" },
-    { "id": "35_finalizacao" }
-  ],
-
-  "checkpoint_4": [
-    { "id": "36_transicao_aula" },
-    { "id": "37_recapitulacao" },
-    { "id": "38_pergunta_cad_aula" },
-    { "id": "39_funcionamento" },
-    { "id": "40_objetivos_metodologia" },
-    { "id": "41_infra_mesas" },
-    { "id": "42_visao_geral" },
-    { "id": "43_qa_infra" }
-  ],
-
-  "checkpoint_5": [
-    { "id": "44_ps_intro" },
-    { "id": "45_ps_etapas" },
-    { "id": "46_ps_humanizado" },
     { "id": "47_conquistas" },
     { "id": "48_diversidade_cern" },
     { "id": "49_fechamento_inspirador" },
-    { "id": "50_despedida" }
+    { "id": "51_despedida_apresentacao1" },
+    { "id": "52_despedida_apresentacao2" }
   ]
 }

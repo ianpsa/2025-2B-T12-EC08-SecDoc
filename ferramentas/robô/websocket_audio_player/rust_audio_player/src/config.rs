@@ -10,7 +10,7 @@ pub struct Config {
 }
 
 const DEFAULT_ROBOT_IP: &str = "192.168.123.161";
-const DEFAULT_WEBSOCKET_URL: &str = "ws://0.0.0.0:8765";
+const DEFAULT_WEBSOCKET_URL: &str = "https://unrevolving-lauren-nonpermeable.ngrok-free.dev";
 const DEFAULT_HTTP_PORT: u16 = 8080;
 
 impl Config {

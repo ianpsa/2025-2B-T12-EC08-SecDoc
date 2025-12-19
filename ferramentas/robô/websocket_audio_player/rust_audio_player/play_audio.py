@@ -7,6 +7,7 @@ import json
 import sys
 import os
 import base64
+import wave
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 GO2_WEBRTC_PATH = os.path.join(SCRIPT_DIR, "..", "go2_webrtc")
@@ -24,6 +25,19 @@ DEFAULT_ROBOT_IP = "192.168.123.161"
 CHUNK_SIZE = 16384
 
 
+def get_wav_duration(wav_path: str) -> float:
+    """Get duration of WAV file in seconds."""
+    try:
+        with wave.open(wav_path, 'rb') as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+            if rate > 0:
+                return frames / float(rate)
+    except Exception:
+        pass
+    return 0.0
+
+
 class SimplePlayer:
     def __init__(self, robot_ip: str):
         self.robot_ip = robot_ip
@@ -39,10 +53,13 @@ class SimplePlayer:
         await self.audio_hub.enter_megaphone()
 
     async def play_wav(self, wav_path: str):
-        """Send complete WAV file to megaphone."""
+        """Send complete WAV file to megaphone and wait for playback to finish."""
         if not os.path.exists(wav_path):
             print("DONE", flush=True)
             return
+        
+        # Get audio duration BEFORE sending
+        duration = get_wav_duration(wav_path)
         
         try:
             with open(wav_path, 'rb') as f:
@@ -70,6 +87,12 @@ class SimplePlayer:
                         })
                     }
                 )
+            
+            # Wait for audio to finish playing before signaling DONE
+            # Add small buffer for transmission delay
+            if duration > 0:
+                print(f"⏳ Waiting {duration:.1f}s for playback...", file=sys.stderr)
+                await asyncio.sleep(duration + 0.3)
                 
         except Exception as e:
             print(f"Error: {e}", file=sys.stderr)

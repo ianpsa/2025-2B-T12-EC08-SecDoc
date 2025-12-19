@@ -1,0 +1,10 @@
+[Unit]
+Description=Run battery_check.service every 2 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+Unit=battery_check.service
+
+[Install]
+WantedBy=timers.target
